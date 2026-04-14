@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqladmin import ModelView
 
+from app.config import settings
 from app.models import (
     BalanceTransaction,
     Category,
@@ -12,31 +13,41 @@ from app.models import (
     User,
 )
 
+# In demo mode the panel is browsable but locked for changes.
+_READ_ONLY = settings.demo_mode
 
-class UserAdmin(ModelView, model=User):
+
+class _BaseView(ModelView):
+    can_create = not _READ_ONLY
+    can_edit = not _READ_ONLY
+    can_delete = not _READ_ONLY
+    can_export = True
+
+
+class UserAdmin(_BaseView, model=User):
     name = "User"
     column_list = [User.id, User.tg_id, User.username, User.role, User.balance]
     column_searchable_list = [User.username, User.full_name]
 
 
-class CategoryAdmin(ModelView, model=Category):
+class CategoryAdmin(_BaseView, model=Category):
     column_list = [Category.id, Category.name, Category.slug, Category.is_active]
 
 
-class FilterOptionAdmin(ModelView, model=FilterOption):
+class FilterOptionAdmin(_BaseView, model=FilterOption):
     column_list = [FilterOption.id, FilterOption.key, FilterOption.label, FilterOption.value]
 
 
-class ProductAdmin(ModelView, model=Product):
+class ProductAdmin(_BaseView, model=Product):
     column_list = [Product.id, Product.title, Product.price, Product.status, Product.owner_id]
     column_searchable_list = [Product.title]
 
 
-class ProductAttributeAdmin(ModelView, model=ProductAttribute):
+class ProductAttributeAdmin(_BaseView, model=ProductAttribute):
     column_list = [ProductAttribute.id, ProductAttribute.product_id, ProductAttribute.option_id]
 
 
-class BalanceTransactionAdmin(ModelView, model=BalanceTransaction):
+class BalanceTransactionAdmin(_BaseView, model=BalanceTransaction):
     column_list = [
         BalanceTransaction.id,
         BalanceTransaction.user_id,
@@ -46,7 +57,7 @@ class BalanceTransactionAdmin(ModelView, model=BalanceTransaction):
     ]
 
 
-class SectionAdmin(ModelView, model=Section):
+class SectionAdmin(_BaseView, model=Section):
     column_list = [Section.id, Section.code, Section.title, Section.is_enabled, Section.sort_order]
 
 

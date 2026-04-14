@@ -9,6 +9,7 @@ from sqladmin import Admin
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.db import SessionLocal, engine, init_db
 from app.models import Product, User
 from app.web.admin_views import ALL_VIEWS
@@ -45,9 +46,9 @@ async def root(session: AsyncSession = Depends(get_session_dep)):
 {analytics_snippets()}
 </head><body>
 <div class="container">
-  <span class="badge">MVP</span>
+  <span class="badge">{('🎭 DEMO — only-view' if settings.demo_mode else 'MVP')}</span>
   <h1>💄 Marketplace Bot</h1>
-  <p class="lead">Панель управления косметическим маркетплейсом. Выберите раздел.</p>
+  <p class="lead">{('Демо-режим: панель доступна только для просмотра, изменения отключены.' if settings.demo_mode else 'Панель управления косметическим маркетплейсом. Выберите раздел.')}</p>
 
   <div class="grid" style="margin-bottom:28px">
     <div class="card"><p>Товаров всего</p><div class="stat">{len(products)}</div></div>

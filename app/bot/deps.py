@@ -24,4 +24,16 @@ async def get_or_create_user(session: AsyncSession, tg_user) -> User:
 
 
 def is_admin(tg_id: int) -> bool:
+    """Real admin — can mutate."""
     return tg_id in settings.admin_id_list
+
+
+def can_view_admin_ui(tg_id: int) -> bool:
+    """In demo mode every user sees the admin UI (read-only)."""
+    return settings.demo_mode or is_admin(tg_id)
+
+
+DEMO_BLOCK_MESSAGE = (
+    "🎭 Демо-режим. Это действие доступно только администратору. "
+    "Просмотр панели работает, изменения отключены."
+)

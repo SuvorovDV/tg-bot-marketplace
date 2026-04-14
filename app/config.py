@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     public_web_url: str = ""  # e.g. https://xxx.trycloudflare.com; empty => localhost URL
     web_secret: str = "change-me"
     daily_placement_fee: int = 50
+    demo_mode: bool = True  # show admin UI to everyone, block mutating actions
     yandex_metrika_id: str = ""
     google_analytics_id: str = ""
     ga_api_secret: str = ""

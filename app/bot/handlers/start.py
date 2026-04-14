@@ -5,7 +5,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
-from app.bot.deps import get_or_create_user, is_admin
+from app.bot.deps import can_view_admin_ui, get_or_create_user
 from app.bot.keyboards import main_menu
 from app.db import get_session
 from app.services.analytics import track
@@ -32,7 +32,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         await track(s, message.from_user.id, "start")
     await message.answer(
         WELCOME,
-        reply_markup=main_menu(sections, is_admin(message.from_user.id)),
+        reply_markup=main_menu(sections, can_view_admin_ui(message.from_user.id)),
         parse_mode="HTML",
     )
 
