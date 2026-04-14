@@ -13,14 +13,12 @@ from app.models import (
     User,
 )
 
-# In demo mode the panel is browsable but locked for changes.
-_READ_ONLY = settings.demo_mode
-
-
+# Access to SQLAdmin is gated by an AuthenticationBackend (see app/web/auth.py).
+# Authenticated admin → full edit; unauthenticated → redirected to login page.
 class _BaseView(ModelView):
-    can_create = not _READ_ONLY
-    can_edit = not _READ_ONLY
-    can_delete = not _READ_ONLY
+    can_create = True
+    can_edit = True
+    can_delete = True
     can_export = True
 
 

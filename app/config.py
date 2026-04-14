@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     web_port: int = 8000
     public_web_url: str = ""  # e.g. https://xxx.trycloudflare.com; empty => localhost URL
     web_secret: str = "change-me"
+    web_admin_password: str = "change-me"  # password for SQLAdmin /admin login
     daily_placement_fee: int = 50
     demo_mode: bool = True  # show admin UI to everyone, block mutating actions
     yandex_metrika_id: str = ""
