@@ -153,7 +153,9 @@ async def admin_menu(message: Message) -> None:
         "📂 /sections — разделы бота\n"
         "🔁 /toggle_section &lt;code&gt; — вкл/выкл раздел\n"
         "✏️ /rename_section &lt;code&gt; — переименовать раздел\n\n"
-        "🖥 Веб-панель открывается в браузере по кнопке выше.",
+        "💻 <b>Совет:</b> веб-панель удобнее открывать с десктопа — "
+        "мобильная версия Telegram открывает ссылку во встроенном "
+        "браузере, и таблицы SQLAdmin плохо в нём помещаются.",
         parse_mode="HTML",
         reply_markup=kb,
     )
