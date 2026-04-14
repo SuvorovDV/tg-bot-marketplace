@@ -1,0 +1,28 @@
+# Secrets / runtime
+.env
+*.db
+*.sqlite*
+
+# Local binaries (downloaded for tunneling, not source)
+cloudflared.exe
+*.exe
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Logs
+*.log
+
+# Markdown — по запросу пользователя
+*.md
