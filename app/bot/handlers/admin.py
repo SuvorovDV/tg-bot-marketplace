@@ -128,16 +128,21 @@ async def admin_menu(message: Message) -> None:
         settings.public_web_url.rstrip("/")
         or f"http://{'127.0.0.1' if settings.web_host == '0.0.0.0' else settings.web_host}:{settings.web_port}"
     )
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🖥 Открыть веб-панель", url=f"{web_base}/admin")],
-            [InlineKeyboardButton(text="📊 Главная (статистика)", url=f"{web_base}/")],
-            [
-                InlineKeyboardButton(text="📋 Очередь", callback_data="admin:queue"),
-                InlineKeyboardButton(text="📂 Разделы", callback_data="admin:sections"),
-            ],
+    rows = [
+        [InlineKeyboardButton(text="🖥 Веб-панель (просмотр)", url=f"{web_base}/admin")],
+        [InlineKeyboardButton(text="📊 Главная (статистика)", url=f"{web_base}/")],
+    ]
+    if is_admin(message.from_user.id):
+        rows.append(
+            [InlineKeyboardButton(text="🔐 Редактор (вход)", url=f"{web_base}/admin/edit")]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(text="📋 Очередь", callback_data="admin:queue"),
+            InlineKeyboardButton(text="📂 Разделы", callback_data="admin:sections"),
         ]
     )
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
     is_real = is_admin(message.from_user.id)
     demo_note = (
         ""

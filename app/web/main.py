@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db import SessionLocal, engine, init_db
 from app.models import Product, User
-from app.web.admin_views import ALL_VIEWS
+from app.web.admin_views import EDITOR_VIEWS, VIEWER_VIEWS
 from app.web.auth import AdminAuth
 from app.web.templates import BASE_CSS, analytics_snippets
 
@@ -24,14 +24,27 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Marketplace Bot Admin", lifespan=lifespan)
-admin = Admin(
+
+# Public read-only browser at /admin
+viewer_admin = Admin(
     app,
     engine,
-    title="Super Admin",
+    base_url="/admin",
+    title="Marketplace — view",
+)
+for view in VIEWER_VIEWS:
+    viewer_admin.add_view(view)
+
+# Password-protected editor at /admin/edit
+editor_admin = Admin(
+    app,
+    engine,
+    base_url="/admin/edit",
+    title="Marketplace — editor",
     authentication_backend=AdminAuth(secret_key=settings.web_secret),
 )
-for view in ALL_VIEWS:
-    admin.add_view(view)
+for view in EDITOR_VIEWS:
+    editor_admin.add_view(view)
 
 
 async def get_session_dep() -> AsyncSession:
@@ -65,8 +78,12 @@ async def root(session: AsyncSession = Depends(get_session_dep)):
 
   <div class="grid">
     <a class="card" href="/admin">
-      <h3>🛠 Админ-панель</h3>
-      <p>Управление пользователями, товарами, фильтрами, разделами бота</p>
+      <h3>🛠 Админ-панель (просмотр)</h3>
+      <p>Все таблицы и фильтры — без логина, только чтение</p>
+    </a>
+    <a class="card" href="/admin/edit">
+      <h3>🔐 Редактор</h3>
+      <p>Полный CRUD за паролем — для администратора</p>
     </a>
     <a class="card" href="/advertiser/6281298268">
       <h3>👤 Кабинет рекламодателя</h3>
