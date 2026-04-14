@@ -26,3 +26,6 @@ __pycache__/
 
 # Markdown — по запросу пользователя
 *.md
+
+# Wrangler local state (account info, build cache)
+.wrangler/
