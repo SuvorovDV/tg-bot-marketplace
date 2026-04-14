@@ -13,7 +13,7 @@ from app.config import settings
 from app.db import SessionLocal, engine, init_db
 from app.models import Product, User
 from app.web.admin_views import EDITOR_VIEWS, VIEWER_VIEWS
-from app.web.auth import AdminAuth
+from app.web.auth import AdminAuth, OpenAuth
 from app.web.templates import BASE_CSS, analytics_snippets
 
 
@@ -31,6 +31,7 @@ viewer_admin = Admin(
     engine,
     base_url="/admin",
     title="Marketplace — view",
+    authentication_backend=OpenAuth(secret_key=settings.web_secret + "-public"),
 )
 for view in VIEWER_VIEWS:
     viewer_admin.add_view(view)
