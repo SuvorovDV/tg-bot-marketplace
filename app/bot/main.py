@@ -52,7 +52,8 @@ async def run_bot() -> None:
     log.info("scheduler started; daily billing at 03:00 UTC")
 
     log.info("Bot starting polling")
-    await dp.start_polling(bot)
+    # polling_timeout < 25s, чтобы long-poll не обрывался прокси (Cloudflare Worker и др.)
+    await dp.start_polling(bot, polling_timeout=20)
 
 
 def main() -> None:
