@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     bot_token: str = "test"
+    telegram_api_server: str = ""  # e.g. https://my-worker.workers.dev (proxy when api.telegram.org is blocked)
     admin_ids: str = ""
     database_url: str = "sqlite+aiosqlite:///./marketplace.db"
     web_host: str = "0.0.0.0"

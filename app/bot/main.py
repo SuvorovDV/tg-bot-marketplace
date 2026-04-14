@@ -4,6 +4,8 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.telegram import TelegramAPIServer
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -23,7 +25,13 @@ async def run_bot() -> None:
     async with get_session() as s:
         await ensure_default_sections(s)
 
-    bot = Bot(token=settings.bot_token)
+    if settings.telegram_api_server:
+        api = TelegramAPIServer.from_base(settings.telegram_api_server.rstrip("/"))
+        session = AiohttpSession(api=api)
+        log.info("Using custom Telegram API server: %s", settings.telegram_api_server)
+        bot = Bot(token=settings.bot_token, session=session)
+    else:
+        bot = Bot(token=settings.bot_token)
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(build_root_router())
     await bot.set_my_commands(
