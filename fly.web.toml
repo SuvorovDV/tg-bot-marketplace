@@ -1,0 +1,25 @@
+# Fly.io config for the FastAPI + SQLAdmin web panel.
+# Deploy: flyctl deploy --config fly.web.toml --remote-only
+
+app = "tg-bot-mkt-web"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[experimental]
+  cmd = ["sh", "-c", "uvicorn app.web:app --host 0.0.0.0 --port ${PORT:-8080}"]
+
+[env]
+  PORT = "8080"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

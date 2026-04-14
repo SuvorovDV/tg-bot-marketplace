@@ -6,10 +6,13 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 from app.bot.handlers import build_root_router
 from app.config import settings
 from app.db import get_session, init_db
+from app.scheduler.main import run_daily_job
 from app.services.sections import ensure_default_sections
 
 log = logging.getLogger(__name__)
@@ -34,6 +37,12 @@ async def run_bot() -> None:
             BotCommand(command="cancel", description="Отменить текущее действие"),
         ]
     )
+    # Run APScheduler in the same process to keep deployment to one app on Fly.
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(run_daily_job, CronTrigger(hour=3, minute=0))
+    scheduler.start()
+    log.info("scheduler started; daily billing at 03:00 UTC")
+
     log.info("Bot starting polling")
     await dp.start_polling(bot)
 
