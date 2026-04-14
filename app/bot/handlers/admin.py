@@ -134,7 +134,7 @@ async def admin_menu(message: Message) -> None:
     ]
     if is_admin(message.from_user.id):
         rows.append(
-            [InlineKeyboardButton(text="🔐 Редактор (вход)", url=f"{web_base}/admin/edit")]
+            [InlineKeyboardButton(text="🔐 Редактор (вход)", url=f"{web_base}/admin-edit")]
         )
     rows.append(
         [

@@ -35,11 +35,11 @@ viewer_admin = Admin(
 for view in VIEWER_VIEWS:
     viewer_admin.add_view(view)
 
-# Password-protected editor at /admin/edit
+# Password-protected editor at /admin-edit
 editor_admin = Admin(
     app,
     engine,
-    base_url="/admin/edit",
+    base_url="/admin-edit",
     title="Marketplace — editor",
     authentication_backend=AdminAuth(secret_key=settings.web_secret),
 )
@@ -81,7 +81,7 @@ async def root(session: AsyncSession = Depends(get_session_dep)):
       <h3>🛠 Админ-панель (просмотр)</h3>
       <p>Все таблицы и фильтры — без логина, только чтение</p>
     </a>
-    <a class="card" href="/admin/edit">
+    <a class="card" href="/admin-edit">
       <h3>🔐 Редактор</h3>
       <p>Полный CRUD за паролем — для администратора</p>
     </a>
