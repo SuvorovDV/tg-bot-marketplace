@@ -37,19 +37,24 @@ FILTER_OPTIONS = [
     ("price_range", "3000₽+", "premium"),
 ]
 
+# Public sample MP4 (~2.5 MB, 15 s). Telegram пре-фетчит по URL.
+DEMO_VIDEO_URL = (
+    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4"
+)
+
 PRODUCTS = [
-    ("Chanel Hydra Beauty Cream", "Увлажняющий крем для сухой кожи, 50 мл", 7500, ["chanel", "dry", "cream", "premium"]),
-    ("Dior Capture Totale Serum", "Антивозрастная сыворотка, 30 мл", 9900, ["dior", "normal", "serum", "premium"]),
-    ("L'Oréal Revitalift Cream", "Дневной крем для комбинированной кожи", 890, ["loreal", "combo", "cream", "cheap"]),
-    ("MAC Ruby Woo Lipstick", "Матовая красная помада, культовый оттенок", 2200, ["mac", "lipstick", "mid"]),
-    ("Maybelline Lash Sensational", "Объёмная тушь для ресниц", 650, ["maybelline", "mascara", "cheap"]),
-    ("Dior Addict Lip Glow", "Бальзам-помада, меняющая цвет", 3800, ["dior", "lipstick", "premium"]),
-    ("Chanel Sublimage Serum", "Премиум-сыворотка, 30 мл", 24000, ["chanel", "dry", "serum", "premium"]),
-    ("L'Oréal Paradise Mascara", "Удлиняющая тушь", 720, ["loreal", "mascara", "cheap"]),
-    ("MAC Studio Fix Cream", "Матирующий крем для жирной кожи", 2900, ["mac", "oily", "cream", "mid"]),
-    ("Maybelline Superstay Lipstick", "Стойкая помада на 16 часов", 990, ["maybelline", "lipstick", "cheap"]),
-    ("Dior Forever Skin Glow", "Увлажняющая сыворотка с сиянием", 6500, ["dior", "normal", "serum", "premium"]),
-    ("Chanel Rouge Allure", "Люксовая помада", 4800, ["chanel", "lipstick", "premium"]),
+    ("Chanel Hydra Beauty Cream", "Увлажняющий крем для сухой кожи, 50 мл", 7500, ["chanel", "dry", "cream", "premium"], True),
+    ("Dior Capture Totale Serum", "Антивозрастная сыворотка, 30 мл", 9900, ["dior", "normal", "serum", "premium"], True),
+    ("L'Oréal Revitalift Cream", "Дневной крем для комбинированной кожи", 890, ["loreal", "combo", "cream", "cheap"], False),
+    ("MAC Ruby Woo Lipstick", "Матовая красная помада, культовый оттенок", 2200, ["mac", "lipstick", "mid"], True),
+    ("Maybelline Lash Sensational", "Объёмная тушь для ресниц", 650, ["maybelline", "mascara", "cheap"], False),
+    ("Dior Addict Lip Glow", "Бальзам-помада, меняющая цвет", 3800, ["dior", "lipstick", "premium"], True),
+    ("Chanel Sublimage Serum", "Премиум-сыворотка, 30 мл", 24000, ["chanel", "dry", "serum", "premium"], True),
+    ("L'Oréal Paradise Mascara", "Удлиняющая тушь", 720, ["loreal", "mascara", "cheap"], False),
+    ("MAC Studio Fix Cream", "Матирующий крем для жирной кожи", 2900, ["mac", "oily", "cream", "mid"], True),
+    ("Maybelline Superstay Lipstick", "Стойкая помада на 16 часов", 990, ["maybelline", "lipstick", "cheap"], False),
+    ("Dior Forever Skin Glow", "Увлажняющая сыворотка с сиянием", 6500, ["dior", "normal", "serum", "premium"], True),
+    ("Chanel Rouge Allure", "Люксовая помада", 4800, ["chanel", "lipstick", "premium"], True),
 ]
 
 
@@ -100,8 +105,13 @@ async def seed() -> None:
             t for (t,) in (await s.execute(select(Product.title))).all()
         }
         created = 0
-        for title, desc, price, values in PRODUCTS:
+        for title, desc, price, values, has_video in PRODUCTS:
             if title in existing_titles:
+                # Backfill video URL on existing seeded rows.
+                if has_video:
+                    p = await s.scalar(select(Product).where(Product.title == title))
+                    if p and not p.video_file_id:
+                        p.video_file_id = DEMO_VIDEO_URL
                 continue
             product = Product(
                 owner_id=adv.id,
@@ -109,6 +119,7 @@ async def seed() -> None:
                 title=title,
                 description=desc,
                 price=price,
+                video_file_id=DEMO_VIDEO_URL if has_video else None,
                 status=ProductStatus.APPROVED,  # already approved so they show up in /Каталог
             )
             s.add(product)
