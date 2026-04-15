@@ -1,4 +1,4 @@
-"""FastAPI web panel: root dashboard, advertiser area, SQLAdmin mounted at /admin-edit."""
+"""FastAPI web panel: root dashboard, advertiser area, SQLAdmin mounted at /admin."""
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
@@ -25,16 +25,15 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Marketplace Bot Admin", lifespan=lifespan)
 
-# Single SQLAdmin instance, password-protected, full CRUD.
-# We used to mount two SQLAdmin instances (viewer at /admin + editor at /admin-edit),
-# but SQLAdmin hard-codes the mount name "admin" (see sqladmin/application.py) and
-# Starlette's `request.url_for("admin:...")` always resolves through the outer
-# router — so the second instance's login redirect and navigation links leaked
-# into the first, breaking edit/create. One admin, one path, no collisions.
+# One SQLAdmin instance at /admin. Everyone can view; CRUD is gated by
+# `is_editor_mode` contextvar populated from the session — see auth.py.
+# Two instances cannot coexist on the same FastAPI: sqladmin hard-codes
+# mount name "admin" (application.py:449), so url_for after login in the
+# second instance resolves to the first. Single instance, dynamic perms.
 admin = Admin(
     app,
     engine,
-    base_url="/admin-edit",
+    base_url="/admin",
     title="Marketplace Admin",
     authentication_backend=AdminAuth(secret_key=settings.web_secret),
 )
@@ -42,10 +41,11 @@ for view in EDITOR_VIEWS:
     admin.add_view(view)
 
 
-@app.get("/admin", include_in_schema=False)
-async def admin_redirect() -> RedirectResponse:
-    # Legacy path — bot buttons and bookmarks still point here.
-    return RedirectResponse("/admin-edit/", status_code=302)
+@app.get("/admin-edit", include_in_schema=False)
+@app.get("/admin-edit/", include_in_schema=False)
+async def admin_edit_redirect() -> RedirectResponse:
+    # Legacy path — bookmarks from the previous dual-mount design.
+    return RedirectResponse("/admin/login", status_code=302)
 
 
 async def get_session_dep() -> AsyncSession:
@@ -68,7 +68,7 @@ async def root(session: AsyncSession = Depends(get_session_dep)):
 <div class="container">
   <span class="badge">MVP</span>
   <h1>💄 Marketplace Bot</h1>
-  <p class="lead">Панель управления косметическим маркетплейсом. Админ-панель за паролем.</p>
+  <p class="lead">Панель управления косметическим маркетплейсом. Просмотр открыт всем, редактирование — по паролю.</p>
 
   <div class="grid" style="margin-bottom:28px">
     <div class="card"><p>Товаров всего</p><div class="stat">{len(products)}</div></div>
@@ -78,9 +78,9 @@ async def root(session: AsyncSession = Depends(get_session_dep)):
   </div>
 
   <div class="grid">
-    <a class="card" href="/admin-edit">
-      <h3>🔐 Админ-панель</h3>
-      <p>Полный CRUD за паролем</p>
+    <a class="card" href="/admin">
+      <h3>🛠 Админ-панель</h3>
+      <p>Просмотр открыт всем, редактирование — по паролю</p>
     </a>
     <a class="card" href="/advertiser/6281298268">
       <h3>👤 Кабинет рекламодателя</h3>
