@@ -129,12 +129,11 @@ async def admin_menu(message: Message) -> None:
         or f"http://{'127.0.0.1' if settings.web_host == '0.0.0.0' else settings.web_host}:{settings.web_port}"
     )
     rows = [
-        [InlineKeyboardButton(text="🖥 Веб-панель (просмотр)", url=f"{web_base}/admin")],
         [InlineKeyboardButton(text="📊 Главная (статистика)", url=f"{web_base}/")],
     ]
     if is_admin(message.from_user.id):
         rows.append(
-            [InlineKeyboardButton(text="🔐 Редактор (вход)", url=f"{web_base}/admin-edit")]
+            [InlineKeyboardButton(text="🔐 Админ-панель", url=f"{web_base}/admin-edit")]
         )
     rows.append(
         [

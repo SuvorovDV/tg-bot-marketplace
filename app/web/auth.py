@@ -25,16 +25,3 @@ class AdminAuth(AuthenticationBackend):
         return bool(request.session.get("admin"))
 
 
-class OpenAuth(AuthenticationBackend):
-    """Always-pass backend so SQLAdmin's internal calls don't trip the
-    `self.authentication_backend is not None` assertion when running two
-    Admin instances side-by-side."""
-
-    async def login(self, request: Request) -> bool:  # pragma: no cover
-        return True
-
-    async def logout(self, request: Request) -> bool:  # pragma: no cover
-        return True
-
-    async def authenticate(self, request: Request) -> bool:
-        return True

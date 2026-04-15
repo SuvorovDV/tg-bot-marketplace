@@ -1,10 +1,10 @@
-"""FastAPI web panel: root dashboard, advertiser area, SQLAdmin mounted at /admin."""
+"""FastAPI web panel: root dashboard, advertiser area, SQLAdmin mounted at /admin-edit."""
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqladmin import Admin
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,8 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db import SessionLocal, engine, init_db
 from app.models import Product, User
-from app.web.admin_views import EDITOR_VIEWS, VIEWER_VIEWS
-from app.web.auth import AdminAuth, OpenAuth
+from app.web.admin_views import EDITOR_VIEWS
+from app.web.auth import AdminAuth
 from app.web.templates import BASE_CSS, analytics_snippets
 
 
@@ -25,27 +25,27 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Marketplace Bot Admin", lifespan=lifespan)
 
-# Public read-only browser at /admin
-viewer_admin = Admin(
-    app,
-    engine,
-    base_url="/admin",
-    title="Marketplace — view",
-    authentication_backend=OpenAuth(secret_key=settings.web_secret + "-public"),
-)
-for view in VIEWER_VIEWS:
-    viewer_admin.add_view(view)
-
-# Password-protected editor at /admin-edit
-editor_admin = Admin(
+# Single SQLAdmin instance, password-protected, full CRUD.
+# We used to mount two SQLAdmin instances (viewer at /admin + editor at /admin-edit),
+# but SQLAdmin hard-codes the mount name "admin" (see sqladmin/application.py) and
+# Starlette's `request.url_for("admin:...")` always resolves through the outer
+# router — so the second instance's login redirect and navigation links leaked
+# into the first, breaking edit/create. One admin, one path, no collisions.
+admin = Admin(
     app,
     engine,
     base_url="/admin-edit",
-    title="Marketplace — editor",
+    title="Marketplace Admin",
     authentication_backend=AdminAuth(secret_key=settings.web_secret),
 )
 for view in EDITOR_VIEWS:
-    editor_admin.add_view(view)
+    admin.add_view(view)
+
+
+@app.get("/admin", include_in_schema=False)
+async def admin_redirect() -> RedirectResponse:
+    # Legacy path — bot buttons and bookmarks still point here.
+    return RedirectResponse("/admin-edit/", status_code=302)
 
 
 async def get_session_dep() -> AsyncSession:
@@ -68,7 +68,7 @@ async def root(session: AsyncSession = Depends(get_session_dep)):
 <div class="container">
   <span class="badge">MVP</span>
   <h1>💄 Marketplace Bot</h1>
-  <p class="lead">Панель управления косметическим маркетплейсом. Админ-панель — за паролем, остальное доступно для просмотра.</p>
+  <p class="lead">Панель управления косметическим маркетплейсом. Админ-панель за паролем.</p>
 
   <div class="grid" style="margin-bottom:28px">
     <div class="card"><p>Товаров всего</p><div class="stat">{len(products)}</div></div>
@@ -78,13 +78,9 @@ async def root(session: AsyncSession = Depends(get_session_dep)):
   </div>
 
   <div class="grid">
-    <a class="card" href="/admin">
-      <h3>🛠 Админ-панель (просмотр)</h3>
-      <p>Все таблицы и фильтры — без логина, только чтение</p>
-    </a>
     <a class="card" href="/admin-edit">
-      <h3>🔐 Редактор</h3>
-      <p>Полный CRUD за паролем — для администратора</p>
+      <h3>🔐 Админ-панель</h3>
+      <p>Полный CRUD за паролем</p>
     </a>
     <a class="card" href="/advertiser/6281298268">
       <h3>👤 Кабинет рекламодателя</h3>
