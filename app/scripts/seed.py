@@ -42,23 +42,41 @@ DEMO_VIDEO_URL = (
     "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4"
 )
 
-# Placeholder photos via picsum.photos (deterministic seed = stable image per product).
-_PHOTO_URL = "https://picsum.photos/seed/{seed}/400/400"
+# Pexels CDN — free, stable, тематические фото по категориям.
+_PX = "https://images.pexels.com/photos/{id}/pexels-photo-{id}.jpeg?auto=compress&cs=tinysrgb&w=400"
+_PHOTOS = {
+    # Крем / skincare jar
+    "cream_1": _PX.format(id=4841500),   # skincare product on yellow surface
+    "cream_2": _PX.format(id=3018845),   # cosmetic products set
+    "cream_3": _PX.format(id=5240623),   # natural cosmetic products on table
+    # Помада / lipstick
+    "lip_1":   _PX.format(id=1367225),   # red gloss lipstick with box
+    "lip_2":   _PX.format(id=90297),     # red lipstick
+    "lip_3":   _PX.format(id=6739657),   # red lipstick on black background
+    "lip_4":   _PX.format(id=7810603),   # close-up red lipstick
+    # Сыворотка / serum dropper
+    "serum_1": _PX.format(id=30968097),  # niacinamide serum bottle with dropper
+    "serum_2": _PX.format(id=34939744),  # natural skincare serum minimalist
+    "serum_3": _PX.format(id=4041391),   # cosmetic bottle with pink rose
+    # Тушь / mascara
+    "masc_1":  _PX.format(id=3373745),   # yellow mascara on yellow background
+    "masc_2":  _PX.format(id=2533266),   # mascara / makeup product
+}
 
-# (title, desc, price, filter_values, has_video, photo_seed)
+# (title, desc, price, filter_values, has_video, photo_key)
 PRODUCTS = [
-    ("Chanel Hydra Beauty Cream", "Увлажняющий крем для сухой кожи, 50 мл", 7500, ["chanel", "dry", "cream", "premium"], True, "chanel-cream"),
-    ("Dior Capture Totale Serum", "Антивозрастная сыворотка, 30 мл", 9900, ["dior", "normal", "serum", "premium"], True, "dior-serum"),
-    ("L'Oréal Revitalift Cream", "Дневной крем для комбинированной кожи", 890, ["loreal", "combo", "cream", "cheap"], True, "loreal-cream"),
-    ("MAC Ruby Woo Lipstick", "Матовая красная помада, культовый оттенок", 2200, ["mac", "lipstick", "mid"], True, "mac-lipstick"),
-    ("Maybelline Lash Sensational", "Объёмная тушь для ресниц", 650, ["maybelline", "mascara", "cheap"], True, "maybelline-mascara"),
-    ("Dior Addict Lip Glow", "Бальзам-помада, меняющая цвет", 3800, ["dior", "lipstick", "premium"], True, "dior-lipglow"),
-    ("Chanel Sublimage Serum", "Премиум-сыворотка, 30 мл", 24000, ["chanel", "dry", "serum", "premium"], True, "chanel-serum"),
-    ("L'Oréal Paradise Mascara", "Удлиняющая тушь", 720, ["loreal", "mascara", "cheap"], True, "loreal-mascara"),
-    ("MAC Studio Fix Cream", "Матирующий крем для жирной кожи", 2900, ["mac", "oily", "cream", "mid"], True, "mac-cream"),
-    ("Maybelline Superstay Lipstick", "Стойкая помада на 16 часов", 990, ["maybelline", "lipstick", "cheap"], True, "maybelline-lipstick"),
-    ("Dior Forever Skin Glow", "Увлажняющая сыворотка с сиянием", 6500, ["dior", "normal", "serum", "premium"], True, "dior-skinglow"),
-    ("Chanel Rouge Allure", "Люксовая помада", 4800, ["chanel", "lipstick", "premium"], True, "chanel-rouge"),
+    ("Chanel Hydra Beauty Cream", "Увлажняющий крем для сухой кожи, 50 мл", 7500, ["chanel", "dry", "cream", "premium"], True, "cream_1"),
+    ("Dior Capture Totale Serum", "Антивозрастная сыворотка, 30 мл", 9900, ["dior", "normal", "serum", "premium"], True, "serum_1"),
+    ("L'Oréal Revitalift Cream", "Дневной крем для комбинированной кожи", 890, ["loreal", "combo", "cream", "cheap"], True, "cream_2"),
+    ("MAC Ruby Woo Lipstick", "Матовая красная помада, культовый оттенок", 2200, ["mac", "lipstick", "mid"], True, "lip_1"),
+    ("Maybelline Lash Sensational", "Объёмная тушь для ресниц", 650, ["maybelline", "mascara", "cheap"], True, "masc_1"),
+    ("Dior Addict Lip Glow", "Бальзам-помада, меняющая цвет", 3800, ["dior", "lipstick", "premium"], True, "lip_2"),
+    ("Chanel Sublimage Serum", "Премиум-сыворотка, 30 мл", 24000, ["chanel", "dry", "serum", "premium"], True, "serum_2"),
+    ("L'Oréal Paradise Mascara", "Удлиняющая тушь", 720, ["loreal", "mascara", "cheap"], True, "masc_2"),
+    ("MAC Studio Fix Cream", "Матирующий крем для жирной кожи", 2900, ["mac", "oily", "cream", "mid"], True, "cream_3"),
+    ("Maybelline Superstay Lipstick", "Стойкая помада на 16 часов", 990, ["maybelline", "lipstick", "cheap"], True, "lip_3"),
+    ("Dior Forever Skin Glow", "Увлажняющая сыворотка с сиянием", 6500, ["dior", "normal", "serum", "premium"], True, "serum_3"),
+    ("Chanel Rouge Allure", "Люксовая помада", 4800, ["chanel", "lipstick", "premium"], True, "lip_4"),
 ]
 
 
@@ -109,14 +127,13 @@ async def seed() -> None:
             t for (t,) in (await s.execute(select(Product.title))).all()
         }
         created = 0
-        for title, desc, price, values, has_video, photo_seed in PRODUCTS:
-            photo_url = _PHOTO_URL.format(seed=photo_seed)
+        for title, desc, price, values, has_video, photo_key in PRODUCTS:
+            photo_url = _PHOTOS[photo_key]
             if title in existing_titles:
-                # Backfill photo/video URLs on existing seeded rows.
+                # Update photo/video URLs on existing seeded rows.
                 p = await s.scalar(select(Product).where(Product.title == title))
                 if p:
-                    if not p.photo_file_id:
-                        p.photo_file_id = photo_url
+                    p.photo_file_id = photo_url
                     if has_video and not p.video_file_id:
                         p.video_file_id = DEMO_VIDEO_URL
                 continue
