@@ -42,19 +42,23 @@ DEMO_VIDEO_URL = (
     "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4"
 )
 
+# Placeholder photos via picsum.photos (deterministic seed = stable image per product).
+_PHOTO_URL = "https://picsum.photos/seed/{seed}/400/400"
+
+# (title, desc, price, filter_values, has_video, photo_seed)
 PRODUCTS = [
-    ("Chanel Hydra Beauty Cream", "Увлажняющий крем для сухой кожи, 50 мл", 7500, ["chanel", "dry", "cream", "premium"], True),
-    ("Dior Capture Totale Serum", "Антивозрастная сыворотка, 30 мл", 9900, ["dior", "normal", "serum", "premium"], True),
-    ("L'Oréal Revitalift Cream", "Дневной крем для комбинированной кожи", 890, ["loreal", "combo", "cream", "cheap"], False),
-    ("MAC Ruby Woo Lipstick", "Матовая красная помада, культовый оттенок", 2200, ["mac", "lipstick", "mid"], True),
-    ("Maybelline Lash Sensational", "Объёмная тушь для ресниц", 650, ["maybelline", "mascara", "cheap"], False),
-    ("Dior Addict Lip Glow", "Бальзам-помада, меняющая цвет", 3800, ["dior", "lipstick", "premium"], True),
-    ("Chanel Sublimage Serum", "Премиум-сыворотка, 30 мл", 24000, ["chanel", "dry", "serum", "premium"], True),
-    ("L'Oréal Paradise Mascara", "Удлиняющая тушь", 720, ["loreal", "mascara", "cheap"], False),
-    ("MAC Studio Fix Cream", "Матирующий крем для жирной кожи", 2900, ["mac", "oily", "cream", "mid"], True),
-    ("Maybelline Superstay Lipstick", "Стойкая помада на 16 часов", 990, ["maybelline", "lipstick", "cheap"], False),
-    ("Dior Forever Skin Glow", "Увлажняющая сыворотка с сиянием", 6500, ["dior", "normal", "serum", "premium"], True),
-    ("Chanel Rouge Allure", "Люксовая помада", 4800, ["chanel", "lipstick", "premium"], True),
+    ("Chanel Hydra Beauty Cream", "Увлажняющий крем для сухой кожи, 50 мл", 7500, ["chanel", "dry", "cream", "premium"], True, "chanel-cream"),
+    ("Dior Capture Totale Serum", "Антивозрастная сыворотка, 30 мл", 9900, ["dior", "normal", "serum", "premium"], True, "dior-serum"),
+    ("L'Oréal Revitalift Cream", "Дневной крем для комбинированной кожи", 890, ["loreal", "combo", "cream", "cheap"], True, "loreal-cream"),
+    ("MAC Ruby Woo Lipstick", "Матовая красная помада, культовый оттенок", 2200, ["mac", "lipstick", "mid"], True, "mac-lipstick"),
+    ("Maybelline Lash Sensational", "Объёмная тушь для ресниц", 650, ["maybelline", "mascara", "cheap"], True, "maybelline-mascara"),
+    ("Dior Addict Lip Glow", "Бальзам-помада, меняющая цвет", 3800, ["dior", "lipstick", "premium"], True, "dior-lipglow"),
+    ("Chanel Sublimage Serum", "Премиум-сыворотка, 30 мл", 24000, ["chanel", "dry", "serum", "premium"], True, "chanel-serum"),
+    ("L'Oréal Paradise Mascara", "Удлиняющая тушь", 720, ["loreal", "mascara", "cheap"], True, "loreal-mascara"),
+    ("MAC Studio Fix Cream", "Матирующий крем для жирной кожи", 2900, ["mac", "oily", "cream", "mid"], True, "mac-cream"),
+    ("Maybelline Superstay Lipstick", "Стойкая помада на 16 часов", 990, ["maybelline", "lipstick", "cheap"], True, "maybelline-lipstick"),
+    ("Dior Forever Skin Glow", "Увлажняющая сыворотка с сиянием", 6500, ["dior", "normal", "serum", "premium"], True, "dior-skinglow"),
+    ("Chanel Rouge Allure", "Люксовая помада", 4800, ["chanel", "lipstick", "premium"], True, "chanel-rouge"),
 ]
 
 
@@ -105,12 +109,15 @@ async def seed() -> None:
             t for (t,) in (await s.execute(select(Product.title))).all()
         }
         created = 0
-        for title, desc, price, values, has_video in PRODUCTS:
+        for title, desc, price, values, has_video, photo_seed in PRODUCTS:
+            photo_url = _PHOTO_URL.format(seed=photo_seed)
             if title in existing_titles:
-                # Backfill video URL on existing seeded rows.
-                if has_video:
-                    p = await s.scalar(select(Product).where(Product.title == title))
-                    if p and not p.video_file_id:
+                # Backfill photo/video URLs on existing seeded rows.
+                p = await s.scalar(select(Product).where(Product.title == title))
+                if p:
+                    if not p.photo_file_id:
+                        p.photo_file_id = photo_url
+                    if has_video and not p.video_file_id:
                         p.video_file_id = DEMO_VIDEO_URL
                 continue
             product = Product(
@@ -119,8 +126,9 @@ async def seed() -> None:
                 title=title,
                 description=desc,
                 price=price,
+                photo_file_id=photo_url,
                 video_file_id=DEMO_VIDEO_URL if has_video else None,
-                status=ProductStatus.APPROVED,  # already approved so they show up in /Каталог
+                status=ProductStatus.APPROVED,
             )
             s.add(product)
             await s.flush()
