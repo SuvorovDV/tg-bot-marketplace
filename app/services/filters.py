@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections import defaultdict
 
 from sqlalchemy import select
@@ -7,9 +8,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import FilterOption, Product, ProductAttribute, ProductStatus
 
+_filter_tree_cache: dict[str, list[FilterOption]] | None = None
+_filter_tree_ts: float = 0.0
+_FILTER_TREE_TTL: float = 60.0  # seconds
+
 
 async def get_filter_tree(session: AsyncSession) -> dict[str, list[FilterOption]]:
-    """Group filter options by key for UI rendering."""
+    """Group filter options by key for UI rendering (cached for 60s)."""
+    global _filter_tree_cache, _filter_tree_ts
+    now = time.monotonic()
+    if _filter_tree_cache is not None and now - _filter_tree_ts < _FILTER_TREE_TTL:
+        return _filter_tree_cache
+
     rows = (
         await session.scalars(
             select(FilterOption).order_by(FilterOption.key, FilterOption.sort_order)
@@ -18,7 +28,9 @@ async def get_filter_tree(session: AsyncSession) -> dict[str, list[FilterOption]
     tree: dict[str, list[FilterOption]] = defaultdict(list)
     for opt in rows:
         tree[opt.key].append(opt)
-    return dict(tree)
+    _filter_tree_cache = dict(tree)
+    _filter_tree_ts = now
+    return _filter_tree_cache
 
 
 async def search_products(

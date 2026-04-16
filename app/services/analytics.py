@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
@@ -12,19 +13,13 @@ from app.models import AnalyticsEvent
 log = logging.getLogger(__name__)
 
 
-async def track(session: AsyncSession, tg_id: int | None, event: str, **payload) -> None:
-    """Persist event locally and fan out to Yandex Metrika / Google Analytics if configured."""
-    session.add(
-        AnalyticsEvent(tg_id=tg_id, event=event, payload=json.dumps(payload, ensure_ascii=False))
-    )
-    await session.commit()
-
+async def _forward_to_external(tg_id: int | None, event: str, payload: dict) -> None:
+    """Fire-and-forget HTTP fan-out to Yandex Metrika / Google Analytics."""
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             if settings.yandex_metrika_id:
-                # Reach Goal via measurement endpoint
                 await client.post(
-                    f"https://mc.yandex.ru/collect/",
+                    "https://mc.yandex.ru/collect/",
                     params={
                         "tid": settings.yandex_metrika_id,
                         "cid": str(tg_id or 0),
@@ -45,5 +40,16 @@ async def track(session: AsyncSession, tg_id: int | None, event: str, **payload)
                         "events": [{"name": event, "params": payload}],
                     },
                 )
-    except Exception as exc:  # external tracking must never break the bot
+    except Exception as exc:
         log.warning("analytics forward failed: %s", exc)
+
+
+async def track(session: AsyncSession, tg_id: int | None, event: str, **payload) -> None:
+    """Persist event locally and fan out to external analytics in background."""
+    session.add(
+        AnalyticsEvent(tg_id=tg_id, event=event, payload=json.dumps(payload, ensure_ascii=False))
+    )
+    await session.commit()
+
+    if settings.yandex_metrika_id or (settings.google_analytics_id and settings.ga_api_secret):
+        asyncio.create_task(_forward_to_external(tg_id, event, payload))
