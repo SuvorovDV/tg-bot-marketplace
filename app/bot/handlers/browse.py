@@ -6,7 +6,7 @@ from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, InputMediaPhoto, Message
+from aiogram.types import CallbackQuery, InputMediaPhoto, InputMediaVideo, Message
 from sqlalchemy.orm import selectinload
 
 from app.bot.keyboards import filter_keyboard, product_card_keyboard
@@ -117,7 +117,7 @@ async def _show_results(
         return
     ids = [p.id for p in products]
     await state.set_state(BrowseStates.viewing)
-    await state.update_data(result_ids=ids, cursor=0, card_message_id=None)
+    await state.update_data(result_ids=ids, cursor=0, card_message_id=None, show_video=False)
     await _render_card(message, state, new_message=True)
 
 
@@ -163,6 +163,11 @@ async def _render_card(
         await message.answer("Товар недоступен.")
         return
 
+    show_video = data.get("show_video", False)
+    has_video = bool(product.video_file_id)
+    # Decide which media to display
+    use_video = show_video and has_video
+
     attrs_block = ("\n" + "\n".join(f"• {line}" for line in attr_lines)) if attr_lines else ""
     caption = (
         f"<b>{product.title}</b>\n"
@@ -171,46 +176,55 @@ async def _render_card(
         f"{product.description or ''}"
     )
     position = f"{cursor + 1} / {len(ids)}"
-    kb = product_card_keyboard(product.id, bool(product.video_file_id), position)
+    kb = product_card_keyboard(product.id, has_video, position, showing_video=use_video)
 
     if new_message or data.get("card_message_id") is None:
-        if product.photo_file_id:
+        if use_video:
+            sent = await message.answer_video(
+                product.video_file_id,
+                caption=caption,
+                reply_markup=kb,
+                parse_mode="HTML",
+            )
+            media_type = "video"
+        elif product.photo_file_id:
             sent = await message.answer_photo(
                 product.photo_file_id,
                 caption=caption,
                 reply_markup=kb,
                 parse_mode="HTML",
             )
+            media_type = "photo"
         else:
             sent = await message.answer(caption, reply_markup=kb, parse_mode="HTML")
+            media_type = "text"
         await state.update_data(
             card_message_id=sent.message_id,
-            card_has_photo=bool(product.photo_file_id),
+            card_media_type=media_type,
             cursor=cursor,
         )
         return
 
     # Try editing in place to avoid chat clutter
-    card_has_photo = data.get("card_has_photo", False)
+    prev_media_type = data.get("card_media_type", "text")
+    # Media type change (photo<->video) requires edit_message_media;
+    # text<->media can't be edited — fall back to new message.
+    if use_video:
+        media = InputMediaVideo(
+            media=product.video_file_id, caption=caption, parse_mode="HTML"
+        )
+        new_media_type = "video"
+    elif product.photo_file_id:
+        media = InputMediaPhoto(
+            media=product.photo_file_id, caption=caption, parse_mode="HTML"
+        )
+        new_media_type = "photo"
+    else:
+        media = None
+        new_media_type = "text"
+
     try:
-        if product.photo_file_id and card_has_photo:
-            await message.bot.edit_message_media(
-                chat_id=message.chat.id,
-                message_id=data["card_message_id"],
-                media=InputMediaPhoto(
-                    media=product.photo_file_id, caption=caption, parse_mode="HTML"
-                ),
-                reply_markup=kb,
-            )
-        elif card_has_photo:
-            await message.bot.edit_message_caption(
-                chat_id=message.chat.id,
-                message_id=data["card_message_id"],
-                caption=caption,
-                parse_mode="HTML",
-                reply_markup=kb,
-            )
-        else:
+        if prev_media_type == "text" and new_media_type == "text":
             await message.bot.edit_message_text(
                 text=caption,
                 chat_id=message.chat.id,
@@ -218,9 +232,20 @@ async def _render_card(
                 parse_mode="HTML",
                 reply_markup=kb,
             )
-        await state.update_data(cursor=cursor)
+        elif prev_media_type != "text" and media is not None:
+            await message.bot.edit_message_media(
+                chat_id=message.chat.id,
+                message_id=data["card_message_id"],
+                media=media,
+                reply_markup=kb,
+            )
+        else:
+            # Can't switch between text and media in-place — send new message
+            await state.update_data(card_message_id=None)
+            await _render_card(message, state, new_message=True)
+            return
+        await state.update_data(cursor=cursor, card_media_type=new_media_type)
     except TelegramBadRequest:
-        # Fall back to a new message if the previous one can't be edited.
         await state.update_data(card_message_id=None)
         await _render_card(message, state, new_message=True)
 
@@ -228,7 +253,7 @@ async def _render_card(
 @router.callback_query(F.data == "prod:next")
 async def next_card(cb: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
-    await state.update_data(cursor=data.get("cursor", 0) + 1)
+    await state.update_data(cursor=data.get("cursor", 0) + 1, show_video=False)
     await cb.answer()
     await _render_card(cb.message, state)
 
@@ -236,23 +261,18 @@ async def next_card(cb: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(F.data == "prod:prev")
 async def prev_card(cb: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
-    await state.update_data(cursor=data.get("cursor", 0) - 1)
+    await state.update_data(cursor=data.get("cursor", 0) - 1, show_video=False)
     await cb.answer()
     await _render_card(cb.message, state)
 
 
-@router.callback_query(F.data.startswith("prod:video:"))
-async def show_video(cb: CallbackQuery) -> None:
-    product_id = int(cb.data.split(":")[-1])
-    async with get_session() as s:
-        product = await s.get(Product, product_id)
-        await track(s, cb.from_user.id, "video_view", product_id=product_id)
-    if product and product.video_file_id:
-        await cb.message.answer_video(product.video_file_id, caption=product.title)
-    else:
-        await cb.answer("Видео недоступно", show_alert=True)
-        return
+@router.callback_query(F.data == "prod:toggle_media")
+async def toggle_media(cb: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    show_video = not data.get("show_video", False)
+    await state.update_data(show_video=show_video)
     await cb.answer()
+    await _render_card(cb.message, state)
 
 
 @router.callback_query(F.data == "prod:back_to_filters")

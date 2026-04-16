@@ -62,13 +62,21 @@ def filter_keyboard(
 
 
 def product_card_keyboard(
-    product_id: int, has_video: bool, position: str = ""
+    product_id: int,
+    has_video: bool,
+    position: str = "",
+    showing_video: bool = False,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     if has_video:
-        rows.append(
-            [InlineKeyboardButton(text="▶️ Смотреть видео", callback_data=f"prod:video:{product_id}")]
-        )
+        if showing_video:
+            rows.append(
+                [InlineKeyboardButton(text="📷 Фото", callback_data="prod:toggle_media")]
+            )
+        else:
+            rows.append(
+                [InlineKeyboardButton(text="🎬 Видео", callback_data="prod:toggle_media")]
+            )
     rows.append(
         [
             InlineKeyboardButton(text="⬅️ Назад", callback_data="prod:prev"),
