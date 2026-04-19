@@ -25,6 +25,7 @@ from app.models import (
     OrderStatus,
     Product,
     ProductStatus,
+    PromoCode,
     User,
 )
 from app.services.filters import get_filter_tree, search_products
@@ -171,8 +172,27 @@ class CartOut(BaseModel):
 
 class CheckoutOut(BaseModel):
     order_ids: list[int]
+    subtotal: float
+    discount: float
     total: float
     balance: float
+
+
+class CheckoutIn(BaseModel):
+    promo_code: str | None = None
+    delivery_address: str | None = None
+
+
+class PromoValidateIn(BaseModel):
+    code: str
+
+
+class PromoValidateOut(BaseModel):
+    valid: bool
+    code: str | None = None
+    discount_percent: int = 0
+    discount_fixed: float = 0
+    message: str = ""
 
 
 class FavoriteOut(BaseModel):
@@ -561,14 +581,65 @@ async def cart_remove(
     return await _build_cart(session, user)
 
 
+async def _resolve_promo(
+    session: AsyncSession, code: str | None
+) -> tuple[PromoCode | None, str]:
+    """Returns (promo_or_None, error_message). Empty code = (None, '') (no promo)."""
+    if not code:
+        return None, ""
+    from datetime import datetime
+    promo = await session.scalar(
+        select(PromoCode).where(PromoCode.code == code.strip().upper())
+    )
+    if not promo:
+        return None, "Промокод не найден"
+    if not promo.is_active:
+        return None, "Промокод неактивен"
+    if promo.usages_left is not None and promo.usages_left <= 0:
+        return None, "Промокод исчерпан"
+    if promo.expires_at and promo.expires_at < datetime.utcnow():
+        return None, "Срок действия промокода истёк"
+    return promo, ""
+
+
+def _compute_discount(promo: PromoCode, subtotal: Decimal) -> Decimal:
+    d = Decimal(0)
+    if promo.discount_percent:
+        d += subtotal * Decimal(promo.discount_percent) / 100
+    if promo.discount_fixed:
+        d += Decimal(promo.discount_fixed)
+    return min(d.quantize(Decimal("0.01")), subtotal)
+
+
+@router.post("/promo/validate", response_model=PromoValidateOut)
+async def validate_promo(
+    body: PromoValidateIn,
+    session: AsyncSession = Depends(_get_session_dep),
+    x_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+) -> PromoValidateOut:
+    await _current_user(session, x_init_data)  # auth only
+    promo, err = await _resolve_promo(session, body.code)
+    if not promo:
+        return PromoValidateOut(valid=False, message=err or "Неверный промокод")
+    return PromoValidateOut(
+        valid=True,
+        code=promo.code,
+        discount_percent=promo.discount_percent or 0,
+        discount_fixed=float(promo.discount_fixed or 0),
+        message="Применён",
+    )
+
+
 @router.post("/checkout", response_model=CheckoutOut)
 async def checkout(
+    body: CheckoutIn | None = None,
     session: AsyncSession = Depends(_get_session_dep),
     x_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
 ) -> CheckoutOut:
-    """Atomic multi-item checkout: validate stock + balance, debit, create Orders."""
+    """Atomic multi-item checkout: validate stock + balance + promo, debit, create Orders."""
     from sqlalchemy.orm import selectinload
 
+    body = body or CheckoutIn()
     user = await _current_user(session, x_init_data)
     rows = (
         await session.scalars(
@@ -580,7 +651,7 @@ async def checkout(
     if not rows:
         raise HTTPException(status_code=400, detail="cart is empty")
 
-    total = Decimal(0)
+    subtotal = Decimal(0)
     for ci in rows:
         p = ci.product
         if not p or p.status != ProductStatus.APPROVED:
@@ -589,29 +660,57 @@ async def checkout(
             raise HTTPException(
                 status_code=409, detail=f"not enough stock for '{p.title}' (have {p.stock}, need {ci.qty})"
             )
-        total += Decimal(p.price or 0) * ci.qty
+        subtotal += Decimal(p.price or 0) * ci.qty
+
+    # Promo (optional)
+    promo, err = await _resolve_promo(session, body.promo_code)
+    if body.promo_code and err:
+        raise HTTPException(status_code=400, detail=err)
+    discount = _compute_discount(promo, subtotal) if promo else Decimal(0)
+    total = subtotal - discount
+
     if Decimal(user.balance) < total:
         raise HTTPException(status_code=402, detail="insufficient balance")
 
-    # Apply: create one Order per cart line, debit balance, decrement stock, clear cart
+    # Discount is distributed across orders proportionally to line subtotals,
+    # so the per-order `price` sum equals the debited `total`.
+    address = (body.delivery_address or "").strip() or None
     order_ids: list[int] = []
-    for ci in rows:
+    applied_discount = Decimal(0)
+    remaining_rows = len(rows)
+    for i, ci in enumerate(rows):
         p = ci.product
-        line_total = Decimal(p.price or 0) * ci.qty
+        line_sub = Decimal(p.price or 0) * ci.qty
+        if i == len(rows) - 1:
+            line_discount = discount - applied_discount  # last row absorbs rounding
+        else:
+            line_discount = (
+                (line_sub / subtotal * discount).quantize(Decimal("0.01"))
+                if subtotal > 0 else Decimal(0)
+            )
+        applied_discount += line_discount
+        line_total = line_sub - line_discount
         p.stock -= ci.qty
         order = Order(
             user_id=user.id, product_id=p.id, price=line_total, status=OrderStatus.PAID,
+            delivery_address=address,
+            promo_code=promo.code if promo else None,
         )
         session.add(order)
+        reason = f"checkout: product #{p.id} x{ci.qty}"
+        if promo:
+            reason += f" (promo {promo.code}, -{line_discount} ₽)"
         session.add(
             BalanceTransaction(
                 user_id=user.id, amount=-line_total,
-                reason=f"checkout: product #{p.id} x{ci.qty}", product_id=p.id,
+                reason=reason, product_id=p.id,
             )
         )
         await session.flush()
         order_ids.append(order.id)
         await session.delete(ci)
+    if promo and promo.usages_left is not None:
+        promo.usages_left = max(0, promo.usages_left - 1)
     user.balance = Decimal(user.balance) - total
     await session.commit()
     await session.refresh(user)
@@ -619,8 +718,16 @@ async def checkout(
     # Admin notifications (best-effort, post-commit so failure doesn't roll back)
     for oid, ci in zip(order_ids, rows):
         try:
-            await _notify_admins_new_order(user, ci.product, oid, Decimal(ci.product.price or 0) * ci.qty)
+            await _notify_admins_new_order(
+                user, ci.product, oid, Decimal(ci.product.price or 0) * ci.qty
+            )
         except Exception:
             pass
 
-    return CheckoutOut(order_ids=order_ids, total=float(total), balance=float(user.balance))
+    return CheckoutOut(
+        order_ids=order_ids,
+        subtotal=float(subtotal),
+        discount=float(discount),
+        total=float(total),
+        balance=float(user.balance),
+    )

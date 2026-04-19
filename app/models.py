@@ -204,6 +204,8 @@ class Order(Base):
     price: Mapped[float] = mapped_column(Numeric(12, 2))
     price_stars: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     status: Mapped[OrderStatus] = mapped_column(Enum(OrderStatus), default=OrderStatus.PAID)
+    delivery_address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    promo_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     user: Mapped[User] = relationship()
@@ -211,6 +213,22 @@ class Order(Base):
 
     def __str__(self) -> str:
         return f"Order #{self.id} ({self.status.value if self.status else '?'})"
+
+
+class PromoCode(Base):
+    __tablename__ = "promo_codes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    discount_percent: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    discount_fixed: Mapped[float] = mapped_column(Numeric(12, 2), default=0, server_default="0")
+    usages_left: Mapped[int | None] = mapped_column(Integer, nullable=True)  # null = unlimited
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    def __str__(self) -> str:
+        return self.code
 
 
 class AnalyticsEvent(Base):

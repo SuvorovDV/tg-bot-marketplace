@@ -18,6 +18,7 @@ from app.models import (
     Order,
     Product,
     ProductAttribute,
+    PromoCode,
     Section,
     User,
 )
@@ -163,6 +164,28 @@ class OrderEditor(_DynamicBase, model=Order):
             log.warning("order status push failed: %s", e)
 
 
+class PromoCodeEditor(_DynamicBase, model=PromoCode):
+    name = "PromoCode"
+    name_plural = "Promo Codes"
+    column_list = [
+        PromoCode.id,
+        PromoCode.code,
+        PromoCode.discount_percent,
+        PromoCode.discount_fixed,
+        PromoCode.usages_left,
+        PromoCode.expires_at,
+        PromoCode.is_active,
+    ]
+    form_columns = [
+        PromoCode.code,
+        PromoCode.discount_percent,
+        PromoCode.discount_fixed,
+        PromoCode.usages_left,
+        PromoCode.expires_at,
+        PromoCode.is_active,
+    ]
+
+
 EDITOR_VIEWS = [
     UserEditor,
     CategoryEditor,
@@ -172,4 +195,5 @@ EDITOR_VIEWS = [
     BalanceTransactionEditor,
     SectionEditor,
     OrderEditor,
+    PromoCodeEditor,
 ]

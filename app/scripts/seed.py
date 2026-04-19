@@ -14,10 +14,17 @@ from app.models import (
     Product,
     ProductAttribute,
     ProductStatus,
+    PromoCode,
     User,
     UserRole,
 )
 from app.services.sections import ensure_default_sections
+
+DEMO_PROMOS = [
+    ("WELCOME", 10, 0, None),    # 10% скидка, без лимита
+    ("BIG500", 0, 500, None),    # −500 ₽, без лимита
+    ("VIP20", 20, 0, 50),        # 20%, 50 использований
+]
 
 FILTER_OPTIONS = [
     ("brand", "Chanel", "chanel"),
@@ -200,7 +207,26 @@ async def seed() -> None:
                     s.add(ProductAttribute(product_id=product.id, option_id=match.id))
             created += 1
         await s.commit()
-        print(f"Seeded: {created} products, {len(value_to_opt)} filter options, advertiser id={adv.id}")
+
+        # Demo promo codes
+        promos_created = 0
+        for code, pct, fixed, usages in DEMO_PROMOS:
+            existing = await s.scalar(select(PromoCode).where(PromoCode.code == code))
+            if existing:
+                continue
+            s.add(PromoCode(
+                code=code,
+                discount_percent=pct,
+                discount_fixed=Decimal(fixed),
+                usages_left=usages,
+            ))
+            promos_created += 1
+        await s.commit()
+
+        print(
+            f"Seeded: {created} products, {len(value_to_opt)} filter options, "
+            f"{promos_created} promo codes, advertiser id={adv.id}"
+        )
 
 
 if __name__ == "__main__":

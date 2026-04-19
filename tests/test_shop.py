@@ -13,6 +13,7 @@ from app.models import (
     OrderStatus,
     Product,
     ProductStatus,
+    PromoCode,
     User,
     UserRole,
 )
@@ -194,6 +195,76 @@ async def test_checkout_creates_orders_and_debits_balance(session, monkeypatch):
     assert p2.stock == 4
     remaining_cart = (await session.scalars(select(CartItem))).all()
     assert remaining_cart == []
+
+
+async def test_promo_validate_ok(session, monkeypatch):
+    user = User(tg_id=30, role=UserRole.USER, balance=Decimal("0"))
+    session.add(user)
+    session.add(PromoCode(code="WELCOME", discount_percent=10, discount_fixed=0))
+    await session.commit()
+
+    app = FastAPI()
+    _mount(app, session, monkeypatch, user)
+    client = TestClient(app)
+    res = client.post("/api/shop/promo/validate", json={"code": "welcome"}).json()
+    assert res["valid"] is True
+    assert res["discount_percent"] == 10
+    assert res["code"] == "WELCOME"
+
+    res = client.post("/api/shop/promo/validate", json={"code": "NOPE"}).json()
+    assert res["valid"] is False
+
+
+async def test_checkout_applies_percent_promo(session, monkeypatch):
+    user = User(tg_id=31, role=UserRole.USER, balance=Decimal("1000"))
+    session.add(user)
+    await session.flush()
+    p = Product(owner_id=user.id, title="X", price=Decimal("500"),
+                stock=3, status=ProductStatus.APPROVED)
+    session.add_all([p, PromoCode(code="WELCOME", discount_percent=10, discount_fixed=0)])
+    await session.flush()
+    session.add(CartItem(user_id=user.id, product_id=p.id, qty=1))
+    await session.commit()
+
+    app = FastAPI()
+    _mount(app, session, monkeypatch, user)
+    client = TestClient(app)
+    res = client.post("/api/shop/checkout", json={
+        "promo_code": "WELCOME", "delivery_address": "ул. Пушкина, д.1"
+    })
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["subtotal"] == 500.0
+    assert body["discount"] == 50.0
+    assert body["total"] == 450.0
+    assert body["balance"] == 550.0
+
+    order = await session.scalar(select(Order))
+    assert order.delivery_address == "ул. Пушкина, д.1"
+    assert order.promo_code == "WELCOME"
+
+
+async def test_checkout_rejects_expired_promo(session, monkeypatch):
+    from datetime import datetime, timedelta
+    user = User(tg_id=32, role=UserRole.USER, balance=Decimal("1000"))
+    session.add(user)
+    await session.flush()
+    p = Product(owner_id=user.id, title="X", price=Decimal("100"),
+                stock=3, status=ProductStatus.APPROVED)
+    session.add_all([
+        p,
+        PromoCode(code="OLD", discount_percent=10, expires_at=datetime.utcnow() - timedelta(days=1)),
+    ])
+    await session.flush()
+    session.add(CartItem(user_id=user.id, product_id=p.id, qty=1))
+    await session.commit()
+
+    app = FastAPI()
+    _mount(app, session, monkeypatch, user)
+    client = TestClient(app)
+    res = client.post("/api/shop/checkout", json={"promo_code": "OLD"})
+    assert res.status_code == 400
+    assert "истёк" in res.json()["detail"].lower() or "expired" in res.json()["detail"].lower()
 
 
 async def test_checkout_rejects_insufficient_balance(session, monkeypatch):

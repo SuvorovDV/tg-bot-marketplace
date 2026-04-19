@@ -289,6 +289,28 @@ MINIAPP_HTML = r"""<!doctype html>
   }
   .cart-total b { font-size: 17px; }
   .cart-empty-hint { padding: 40px 20px; text-align: center; color: var(--muted); }
+  .promo-row { display: flex; gap: 8px; margin-bottom: 6px; }
+  .promo-row input {
+    flex: 1; padding: 9px 12px; border: none; border-radius: 8px;
+    background: var(--card); color: var(--fg); font-size: 13px; outline: none;
+    text-transform: uppercase;
+  }
+  .promo-row button {
+    padding: 9px 14px; border: none; border-radius: 8px;
+    background: var(--accent); color: var(--accent-fg);
+    font-size: 13px; font-weight: 500; cursor: pointer;
+  }
+  .promo-status { font-size: 12px; margin: 0 0 8px; min-height: 16px; }
+  .promo-status.ok { color: var(--ok); }
+  .promo-status.err { color: var(--err); }
+  .promo-hint { font-size: 11px; color: var(--muted); margin: 0 0 10px; }
+  .address-input {
+    width: 100%; padding: 8px 12px; border: 1px solid rgba(0,0,0,0.1);
+    border-radius: 8px; background: var(--bg); color: var(--fg);
+    font-size: 13px; margin-bottom: 10px; font-family: inherit;
+    resize: vertical; outline: none; box-sizing: border-box; min-height: 40px;
+  }
+  .discount-line { color: var(--ok); }
 
   /* profile tabs */
   .tabs { display: flex; margin: 4px 12px 0; border-bottom: 1px solid rgba(0,0,0,0.08); }
@@ -350,6 +372,18 @@ MINIAPP_HTML = r"""<!doctype html>
   <div id="cartList" class="cart-list"></div>
   <div id="cartEmpty" class="cart-empty-hint" style="display:none">Корзина пуста — выберите что-нибудь в каталоге</div>
   <div id="cartSummary" class="cart-summary" style="display:none">
+    <div class="promo-row">
+      <input id="promoInput" type="text" placeholder="Промокод" autocapitalize="characters" autocomplete="off">
+      <button id="promoApplyBtn">Применить</button>
+    </div>
+    <div id="promoStatus" class="promo-status"></div>
+    <div class="promo-hint">Попробуйте <b>WELCOME</b> (−10%) или <b>BIG500</b> (−500 ₽)</div>
+    <textarea id="addressInput" class="address-input" rows="2" placeholder="Адрес доставки (необязательно)"></textarea>
+    <div class="cart-total"><span>Сумма</span><span id="cartSubtotal">0 ₽</span></div>
+    <div class="cart-total discount-line" id="cartDiscountRow" style="display:none">
+      <span id="cartDiscountLabel">Скидка</span>
+      <span id="cartDiscount">−0 ₽</span>
+    </div>
     <div class="cart-total"><span>Итого</span><b id="cartTotal">0 ₽</b></div>
     <button class="primary" id="checkoutBtn">Оформить заказ</button>
   </div>
@@ -434,6 +468,7 @@ let searchQuery = "";
 let favoriteIds = new Set();           // product IDs in user's wishlist
 let activeCategoryId = null;           // FilterOption.id of selected category tab, or null = Все
 let cartState = { items: [], total: 0, balance: 0 };
+let appliedPromo = null;              // {code, discount_percent, discount_fixed}
 
 // ---- balance ----
 async function loadBalance() {
@@ -562,6 +597,13 @@ async function loadCart() {
   try { applyCartState(await api("/api/shop/cart")); } catch (e) { /* ignore */ }
 }
 
+function computeDiscount(subtotal) {
+  if (!appliedPromo) return 0;
+  let d = subtotal * (appliedPromo.discount_percent || 0) / 100;
+  d += (appliedPromo.discount_fixed || 0);
+  return Math.min(Math.max(0, Math.round(d * 100) / 100), subtotal);
+}
+
 function renderCart() {
   const list = $("cartList");
   if (!cartState.items.length) {
@@ -572,7 +614,14 @@ function renderCart() {
   }
   $("cartEmpty").style.display = "none";
   $("cartSummary").style.display = "";
-  $("cartTotal").textContent = `${fmt(cartState.total)} ₽`;
+  const subtotal = cartState.total;
+  const discount = computeDiscount(subtotal);
+  const final = Math.max(0, subtotal - discount);
+  $("cartSubtotal").textContent = `${fmt(subtotal)} ₽`;
+  $("cartDiscountRow").style.display = discount > 0 ? "" : "none";
+  $("cartDiscountLabel").textContent = appliedPromo ? `Скидка (${appliedPromo.code})` : "Скидка";
+  $("cartDiscount").textContent = `−${fmt(discount)} ₽`;
+  $("cartTotal").textContent = `${fmt(final)} ₽`;
   list.innerHTML = cartState.items.map(it => `
     <div class="order" data-id="${it.product_id}">
       <div class="ph" style="${it.photo_url ? `background-image:url('${it.photo_url}')` : ''}"></div>
@@ -625,18 +674,67 @@ function closeCart() {
 $("cartBtn").addEventListener("click", openCart);
 $("cartBackBtn").addEventListener("click", closeCart);
 
+$("promoApplyBtn").addEventListener("click", async () => {
+  const code = ($("promoInput").value || "").trim().toUpperCase();
+  if (!code) {
+    appliedPromo = null;
+    $("promoStatus").textContent = "";
+    renderCart();
+    return;
+  }
+  try {
+    const res = await api("/api/shop/promo/validate", {
+      method: "POST", body: JSON.stringify({ code }),
+    });
+    if (res.valid) {
+      appliedPromo = {
+        code: res.code,
+        discount_percent: res.discount_percent,
+        discount_fixed: res.discount_fixed,
+      };
+      const desc = [];
+      if (res.discount_percent) desc.push(`−${res.discount_percent}%`);
+      if (res.discount_fixed) desc.push(`−${fmt(res.discount_fixed)} ₽`);
+      $("promoStatus").textContent = `✓ ${res.code} применён: ${desc.join(" и ")}`;
+      $("promoStatus").className = "promo-status ok";
+      tg?.HapticFeedback?.impactOccurred("light");
+    } else {
+      appliedPromo = null;
+      $("promoStatus").textContent = res.message || "Недействительный промокод";
+      $("promoStatus").className = "promo-status err";
+    }
+  } catch (e) {
+    appliedPromo = null;
+    $("promoStatus").textContent = "Ошибка: " + e.message;
+    $("promoStatus").className = "promo-status err";
+  }
+  renderCart();
+});
+
 $("checkoutBtn").addEventListener("click", async () => {
   const btn = $("checkoutBtn");
   btn.disabled = true;
   const orig = btn.textContent;
   btn.textContent = "Оформляем…";
   try {
-    const res = await api("/api/shop/checkout", { method: "POST" });
+    const body = {
+      promo_code: appliedPromo?.code || null,
+      delivery_address: ($("addressInput").value || "").trim() || null,
+    };
+    const res = await api("/api/shop/checkout", {
+      method: "POST", body: JSON.stringify(body),
+    });
     tg?.HapticFeedback?.notificationOccurred("success");
-    toast(`✓ Оформлено: ${res.order_ids.length} позиц.`, "ok");
+    let msg = `✓ Оформлено: ${res.order_ids.length} поз.`;
+    if (res.discount > 0) msg += ` (−${fmt(res.discount)} ₽)`;
+    toast(msg, "ok");
+    appliedPromo = null;
+    $("promoInput").value = "";
+    $("addressInput").value = "";
+    $("promoStatus").textContent = "";
     await loadCart();       // now empty
     await loadProducts();   // stocks changed
-    setTimeout(closeCart, 1000);
+    setTimeout(closeCart, 1200);
   } catch (e) {
     const map = {
       "insufficient balance": "Недостаточно средств на балансе",
