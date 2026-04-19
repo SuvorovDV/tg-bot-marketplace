@@ -166,6 +166,20 @@ class Favorite(Base):
     product: Mapped[Product] = relationship()
 
 
+class CartItem(Base):
+    __tablename__ = "cart_items"
+    __table_args__ = (UniqueConstraint("user_id", "product_id", name="uq_cart_user_product"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"))
+    qty: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    added_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    user: Mapped[User] = relationship()
+    product: Mapped[Product] = relationship()
+
+
 class Section(Base):
     """Dynamic bot navigation: admin can rename/toggle sections without redeploy."""
 

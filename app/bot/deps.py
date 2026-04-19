@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models import User, UserRole
+
+# Demo starting balance — so testers can buy without topping up.
+DEMO_SIGNUP_BALANCE = Decimal("100000")
 
 
 async def get_or_create_user(session: AsyncSession, tg_user) -> User:
@@ -17,6 +22,7 @@ async def get_or_create_user(session: AsyncSession, tg_user) -> User:
         username=tg_user.username,
         full_name=tg_user.full_name,
         role=role,
+        balance=DEMO_SIGNUP_BALANCE,
     )
     session.add(user)
     await session.commit()

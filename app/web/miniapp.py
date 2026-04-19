@@ -257,6 +257,39 @@ MINIAPP_HTML = r"""<!doctype html>
   }
   .fav-btn-big.on { color: #ff4060; background: rgba(255,255,255,0.95); }
 
+  /* cart */
+  .cart-btn-wrap { position: relative; }
+  .cart-badge {
+    position: absolute; top: -3px; right: -3px;
+    min-width: 16px; height: 16px; padding: 0 4px;
+    border-radius: 10px; background: var(--accent); color: var(--accent-fg);
+    font-size: 10px; line-height: 16px; text-align: center; font-weight: 700;
+  }
+  .cart-badge:empty { display: none; }
+  .cart-list { padding: 8px 12px; display: flex; flex-direction: column; gap: 8px; }
+  .qty-stepper {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--bg); border-radius: 8px; padding: 2px;
+  }
+  .qty-stepper button {
+    width: 26px; height: 26px; border-radius: 6px;
+    background: var(--card); color: var(--fg);
+    border: none; cursor: pointer; font-size: 16px; font-weight: 600;
+  }
+  .qty-stepper button:disabled { opacity: 0.4; }
+  .qty-stepper .qty { min-width: 18px; text-align: center; font-size: 14px; font-weight: 600; }
+  .cart-summary {
+    position: sticky; bottom: 0; background: var(--bg);
+    border-top: 1px solid rgba(0,0,0,0.08);
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  }
+  .cart-total {
+    display: flex; justify-content: space-between; margin-bottom: 10px;
+    font-size: 15px;
+  }
+  .cart-total b { font-size: 17px; }
+  .cart-empty-hint { padding: 40px 20px; text-align: center; color: var(--muted); }
+
   /* profile tabs */
   .tabs { display: flex; margin: 4px 12px 0; border-bottom: 1px solid rgba(0,0,0,0.08); }
   .tab {
@@ -274,6 +307,10 @@ MINIAPP_HTML = r"""<!doctype html>
   <h1>🛍 Маркет</h1>
   <div class="hdr-right">
     <div class="balance">Баланс: <b id="balance">…</b> ₽</div>
+    <div class="cart-btn-wrap">
+      <button class="icon-btn" id="cartBtn" title="Корзина">🛒</button>
+      <span class="cart-badge" id="cartBadge"></span>
+    </div>
     <button class="icon-btn" id="profileBtn" title="Профиль">👤</button>
   </div>
 </header>
@@ -303,6 +340,18 @@ MINIAPP_HTML = r"""<!doctype html>
   </div>
   <div class="buy-bar">
     <button class="primary" id="buyBtn">Купить</button>
+  </div>
+</section>
+
+<section id="cart" class="detail">
+  <button class="back-btn" id="cartBackBtn">←</button>
+  <div style="height: 56px"></div>
+  <div class="section-title" style="padding-top:0">🛒 Корзина</div>
+  <div id="cartList" class="cart-list"></div>
+  <div id="cartEmpty" class="cart-empty-hint" style="display:none">Корзина пуста — выберите что-нибудь в каталоге</div>
+  <div id="cartSummary" class="cart-summary" style="display:none">
+    <div class="cart-total"><span>Итого</span><b id="cartTotal">0 ₽</b></div>
+    <button class="primary" id="checkoutBtn">Оформить заказ</button>
   </div>
 </section>
 
@@ -384,6 +433,7 @@ let selectedOptions = new Set();
 let searchQuery = "";
 let favoriteIds = new Set();           // product IDs in user's wishlist
 let activeCategoryId = null;           // FilterOption.id of selected category tab, or null = Все
+let cartState = { items: [], total: 0, balance: 0 };
 
 // ---- balance ----
 async function loadBalance() {
@@ -499,6 +549,106 @@ function updateHeartButton(btn, productId) {
   else btn.classList.remove("on");
 }
 
+// ---- cart ----
+function applyCartState(cart) {
+  cartState = cart;
+  $("balance").textContent = fmt(cart.balance);
+  const count = cart.items.reduce((s, it) => s + it.qty, 0);
+  $("cartBadge").textContent = count > 0 ? String(count) : "";
+  if ($("cart").classList.contains("open")) renderCart();
+}
+
+async function loadCart() {
+  try { applyCartState(await api("/api/shop/cart")); } catch (e) { /* ignore */ }
+}
+
+function renderCart() {
+  const list = $("cartList");
+  if (!cartState.items.length) {
+    list.innerHTML = "";
+    $("cartEmpty").style.display = "block";
+    $("cartSummary").style.display = "none";
+    return;
+  }
+  $("cartEmpty").style.display = "none";
+  $("cartSummary").style.display = "";
+  $("cartTotal").textContent = `${fmt(cartState.total)} ₽`;
+  list.innerHTML = cartState.items.map(it => `
+    <div class="order" data-id="${it.product_id}">
+      <div class="ph" style="${it.photo_url ? `background-image:url('${it.photo_url}')` : ''}"></div>
+      <div class="info">
+        <p class="title">${escapeHtml(it.title)}</p>
+        <div class="meta">${fmt(it.price)} ₽ · ${fmt(it.subtotal)} ₽</div>
+      </div>
+      <div class="qty-stepper">
+        <button data-dec="${it.product_id}" ${it.qty <= 1 ? 'aria-label="Удалить"' : ''}>−</button>
+        <span class="qty">${it.qty}</span>
+        <button data-inc="${it.product_id}" ${it.qty >= it.stock ? 'disabled' : ''}>+</button>
+      </div>
+    </div>
+  `).join("");
+  list.querySelectorAll("[data-inc]").forEach(b => {
+    b.addEventListener("click", async () => {
+      const pid = Number(b.dataset.inc);
+      const it = cartState.items.find(x => x.product_id === pid);
+      if (!it) return;
+      try { applyCartState(await api(`/api/shop/cart/${pid}`, {method:"PATCH", body: JSON.stringify({qty: it.qty + 1})})); }
+      catch (e) { toast("Ошибка: " + e.message, "err"); }
+    });
+  });
+  list.querySelectorAll("[data-dec]").forEach(b => {
+    b.addEventListener("click", async () => {
+      const pid = Number(b.dataset.dec);
+      const it = cartState.items.find(x => x.product_id === pid);
+      if (!it) return;
+      const newQty = it.qty - 1;
+      try {
+        applyCartState(await api(`/api/shop/cart/${pid}`, {
+          method: "PATCH", body: JSON.stringify({qty: newQty})
+        }));
+      } catch (e) { toast("Ошибка: " + e.message, "err"); }
+    });
+  });
+}
+
+async function openCart() {
+  await loadCart();
+  renderCart();
+  $("cart").classList.add("open");
+  tg?.BackButton?.show();
+}
+function closeCart() {
+  $("cart").classList.remove("open");
+  tg?.BackButton?.hide();
+}
+
+$("cartBtn").addEventListener("click", openCart);
+$("cartBackBtn").addEventListener("click", closeCart);
+
+$("checkoutBtn").addEventListener("click", async () => {
+  const btn = $("checkoutBtn");
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = "Оформляем…";
+  try {
+    const res = await api("/api/shop/checkout", { method: "POST" });
+    tg?.HapticFeedback?.notificationOccurred("success");
+    toast(`✓ Оформлено: ${res.order_ids.length} позиц.`, "ok");
+    await loadCart();       // now empty
+    await loadProducts();   // stocks changed
+    setTimeout(closeCart, 1000);
+  } catch (e) {
+    const map = {
+      "insufficient balance": "Недостаточно средств на балансе",
+      "cart is empty": "Корзина пуста",
+    };
+    toast(map[e.message] || ("Ошибка: " + e.message), "err");
+    tg?.HapticFeedback?.notificationOccurred("error");
+  }
+  btn.disabled = false;
+  btn.textContent = orig;
+});
+
 // ---- products ----
 async function loadProducts() {
   $("empty").style.display = "none";
@@ -531,7 +681,7 @@ async function loadProducts() {
       </div>
       <div class="body">
         <p class="title">${escapeHtml(p.title)}</p>
-        <div class="price">⭐ ${p.price_stars}</div>
+        <div class="price">${fmt(p.price)} ₽</div>
         <div class="stock ${p.stock <= 0 ? 'oos' : ''}">${p.stock > 0 ? 'В наличии: ' + p.stock : 'Нет в наличии'}</div>
       </div>
     </div>
@@ -556,12 +706,12 @@ function openDetail(id) {
   currentDetail = p;
   $("detailHero").style.backgroundImage = p.photo_url ? `url('${p.photo_url}')` : "";
   $("detailTitle").textContent = p.title;
-  $("detailPrice").textContent = "⭐ " + p.price_stars;
+  $("detailPrice").textContent = fmt(p.price) + " ₽";
   $("detailStock").textContent = p.stock > 0 ? `В наличии: ${p.stock} шт.` : "Нет в наличии";
   $("detailStock").className = "stock" + (p.stock <= 0 ? " oos" : "");
   $("detailDesc").textContent = p.description || "";
   $("buyBtn").disabled = p.stock <= 0;
-  $("buyBtn").textContent = p.stock > 0 ? `Купить за ⭐ ${p.price_stars}` : "Нет в наличии";
+  $("buyBtn").textContent = p.stock > 0 ? `В корзину · ${fmt(p.price)} ₽` : "Нет в наличии";
   updateHeartButton($("detailFavBtn"), p.id);
   $("detail").classList.add("open");
   tg?.BackButton?.show();
@@ -589,49 +739,18 @@ $("buyBtn").addEventListener("click", async () => {
   const btn = $("buyBtn");
   const origLabel = btn.textContent;
   btn.disabled = true;
-  btn.textContent = "Готовим оплату…";
-
-  let invoiceUrl;
+  btn.textContent = "Добавляем…";
   try {
-    const res = await api("/api/shop/create_invoice", {
-      method: "POST",
-      body: JSON.stringify({ product_id: currentDetail.id }),
-    });
-    invoiceUrl = res.invoice_url;
+    const res = await api(`/api/shop/cart/${currentDetail.id}`, { method: "POST" });
+    applyCartState(res);
+    tg?.HapticFeedback?.impactOccurred("light");
+    toast("✓ Добавлено в корзину", "ok");
   } catch (e) {
-    const msgMap = {
-      "out of stock": "Товар закончился",
-      "product not available": "Товар недоступен",
-    };
-    toast(msgMap[e.message] || ("Ошибка: " + e.message), "err");
+    toast("Ошибка: " + e.message, "err");
     tg?.HapticFeedback?.notificationOccurred("error");
-    btn.disabled = false;
-    btn.textContent = origLabel;
-    return;
   }
-
-  if (!tg?.openInvoice) {
-    toast("Откройте магазин внутри Telegram, чтобы оплатить звёздами", "err");
-    btn.disabled = false;
-    btn.textContent = origLabel;
-    return;
-  }
-
-  tg.openInvoice(invoiceUrl, (status) => {
-    if (status === "paid") {
-      tg?.HapticFeedback?.notificationOccurred("success");
-      toast("✓ Оплачено", "ok");
-      loadProducts();
-      setTimeout(closeDetail, 800);
-    } else if (status === "failed") {
-      toast("Платёж не прошёл", "err");
-      tg?.HapticFeedback?.notificationOccurred("error");
-    } else if (status === "cancelled") {
-      toast("Платёж отменён");
-    }
-    btn.disabled = false;
-    btn.textContent = origLabel;
-  });
+  btn.disabled = currentDetail.stock <= 0;
+  btn.textContent = origLabel;
 });
 
 // ---- search + filter wiring ----
@@ -698,7 +817,7 @@ async function loadOrdersTab() {
           <div class="meta">#${o.id} · ${dateStr}</div>
         </div>
         <div class="right">
-          <div class="price">⭐ ${o.price_stars}</div>
+          <div class="price">${fmt(o.price)} ₽</div>
           <span class="badge st-${status}">${escapeHtml(STATUS_LABEL[status] || status)}</span>
         </div>
       </div>`;
@@ -724,7 +843,7 @@ async function loadFavoritesTab() {
         <div class="meta">${f.stock > 0 ? 'В наличии: ' + f.stock : 'Нет в наличии'}</div>
       </div>
       <div class="right">
-        <div class="price">⭐ ${f.price_stars}</div>
+        <div class="price">${fmt(f.price)} ₽</div>
         <button class="fav-btn on" data-unfav="${f.product_id}" aria-label="Убрать из избранного" style="position:static">♥</button>
       </div>
     </div>
@@ -793,16 +912,17 @@ function closeProfile() {
 $("profileBtn").addEventListener("click", openProfile);
 $("profileBackBtn").addEventListener("click", closeProfile);
 
-// Re-bind BackButton handler: both detail AND profile use it. Simple approach —
-// close whichever is open.
+// Re-bind BackButton handler: detail / profile / cart all use overlays.
+// Close whichever is open (top-most first).
 tg?.BackButton?.onClick(() => {
-  if ($("profile").classList.contains("open")) closeProfile();
+  if ($("cart").classList.contains("open")) closeCart();
+  else if ($("profile").classList.contains("open")) closeProfile();
   else if ($("detail").classList.contains("open")) closeDetail();
 });
 
 (async () => {
   await loadFavoriteIds();
-  await Promise.all([loadBalance(), loadFilters(), loadProducts()]);
+  await Promise.all([loadBalance(), loadFilters(), loadProducts(), loadCart()]);
 })();
 </script>
 </body>

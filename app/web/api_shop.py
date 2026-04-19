@@ -9,17 +9,20 @@ from typing import Any
 from urllib.parse import parse_qsl
 
 from aiogram import Bot
-from aiogram.types import LabeledPrice
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot.deps import DEMO_SIGNUP_BALANCE
 from app.config import settings
 from app.db import SessionLocal
 from app.models import (
+    BalanceTransaction,
+    CartItem,
     Favorite,
     Order,
+    OrderStatus,
     Product,
     ProductStatus,
     User,
@@ -94,7 +97,7 @@ async def _current_user(
                     tg_id=tg_id,
                     username="demo_shopper",
                     full_name="Demo Shopper",
-                    balance=Decimal("10000"),
+                    balance=DEMO_SIGNUP_BALANCE,
                 )
                 session.add(user)
                 await session.commit()
@@ -112,7 +115,7 @@ async def _current_user(
             full_name=" ".join(
                 filter(None, [tg_user.get("first_name"), tg_user.get("last_name")])
             ) or None,
-            balance=Decimal("0"),
+            balance=DEMO_SIGNUP_BALANCE,
         )
         session.add(user)
         await session.commit()
@@ -124,7 +127,7 @@ class ProductOut(BaseModel):
     id: int
     title: str
     description: str | None = None
-    price_stars: int
+    price: float
     stock: int
     photo_url: str | None = None
     video_url: str | None = None
@@ -140,18 +143,36 @@ class BuyIn(BaseModel):
     product_id: int
 
 
-class InvoiceOut(BaseModel):
-    invoice_url: str
-
-
 class OrderOut(BaseModel):
     id: int
     product_id: int
     product_title: str
     photo_url: str | None = None
-    price_stars: int
+    price: float
     status: str
     created_at: str
+
+
+class CartItemOut(BaseModel):
+    product_id: int
+    title: str
+    photo_url: str | None = None
+    price: float
+    stock: int
+    qty: int
+    subtotal: float
+
+
+class CartOut(BaseModel):
+    items: list[CartItemOut]
+    total: float
+    balance: float
+
+
+class CheckoutOut(BaseModel):
+    order_ids: list[int]
+    total: float
+    balance: float
 
 
 class FavoriteOut(BaseModel):
@@ -167,7 +188,7 @@ def _product_to_out(p: Product) -> ProductOut:
         id=p.id,
         title=p.title,
         description=p.description,
-        price_stars=p.price_stars or 1,
+        price=float(p.price or 0),
         stock=p.stock,
         photo_url=p.photo_file_id if (p.photo_file_id or "").startswith("http") else None,
         video_url=p.video_file_id if (p.video_file_id or "").startswith("http") else None,
@@ -353,7 +374,7 @@ async def my_orders(
                 product_id=o.product_id,
                 product_title=o.product.title if o.product else f"Product #{o.product_id}",
                 photo_url=photo if (photo or "").startswith("http") else None,
-                price_stars=o.price_stars or 0,
+                price=float(o.price or 0),
                 status=o.status.value if o.status else "paid",
                 created_at=o.created_at.isoformat() if o.created_at else "",
             )
@@ -361,33 +382,245 @@ async def my_orders(
     return out
 
 
-@router.post("/create_invoice", response_model=InvoiceOut)
-async def create_invoice(
+async def _notify_admins_new_order(user: User, product: Product, order_id: int, price: Decimal) -> None:
+    """Best-effort push to admins. Safe no-op on any Telegram failure."""
+    try:
+        bot = _get_bot()
+        label = (
+            (user.username and f"@{user.username}") or user.full_name or str(user.tg_id)
+        )
+        for admin_id in settings.admin_id_list:
+            if admin_id == user.tg_id:
+                continue
+            try:
+                await bot.send_message(
+                    admin_id,
+                    f"🛒 <b>Новый заказ #{order_id}</b>\n"
+                    f"Покупатель: {label} (<code>{user.tg_id}</code>)\n"
+                    f"Товар: <b>{product.title}</b>\n"
+                    f"Сумма: <b>{price:.0f} ₽</b>",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+@router.post("/buy")
+async def buy_product(
     body: BuyIn,
     session: AsyncSession = Depends(_get_session_dep),
     x_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
-) -> InvoiceOut:
-    """Create a Telegram Stars invoice link for a product.
-
-    Actual stock decrement + Order creation happens in the bot process on
-    successful_payment — see app/bot/handlers/shop.py.
-    """
+) -> dict:
+    """Single-item quick buy: debit balance, decrement stock, create Order(PAID)."""
     user = await _current_user(session, x_init_data)
-
     product = await session.get(Product, body.product_id)
     if not product or product.status != ProductStatus.APPROVED:
         raise HTTPException(status_code=404, detail="product not available")
     if product.stock <= 0:
         raise HTTPException(status_code=409, detail="out of stock")
+    price = Decimal(product.price or 0)
+    if Decimal(user.balance) < price:
+        raise HTTPException(status_code=402, detail="insufficient balance")
 
-    stars = max(1, int(product.price_stars or 1))
-    bot = _get_bot()
-    invoice_url = await bot.create_invoice_link(
-        title=product.title[:32] or "Товар",
-        description=(product.description or "Покупка в маркете")[:255],
-        payload=f"buy:{product.id}:{user.tg_id}",
-        provider_token="",  # empty for Telegram Stars (XTR)
-        currency="XTR",
-        prices=[LabeledPrice(label="Покупка", amount=stars)],
+    product.stock -= 1
+    user.balance = Decimal(user.balance) - price
+    order = Order(
+        user_id=user.id, product_id=product.id, price=price, status=OrderStatus.PAID,
     )
-    return InvoiceOut(invoice_url=invoice_url)
+    session.add(order)
+    session.add(
+        BalanceTransaction(
+            user_id=user.id, amount=-price,
+            reason=f"purchase: product #{product.id}", product_id=product.id,
+        )
+    )
+    await session.commit()
+    await session.refresh(order)
+    await session.refresh(user)
+    await session.refresh(product)
+
+    await _notify_admins_new_order(user, product, order.id, price)
+    return {
+        "order_id": order.id,
+        "balance": float(user.balance),
+        "stock": product.stock,
+    }
+
+
+# ---- cart ----------------------------------------------------------------
+
+class CartQtyIn(BaseModel):
+    qty: int = 1
+
+
+async def _build_cart(session: AsyncSession, user: User) -> CartOut:
+    from sqlalchemy.orm import selectinload
+
+    rows = (
+        await session.scalars(
+            select(CartItem)
+            .where(CartItem.user_id == user.id)
+            .options(selectinload(CartItem.product))
+            .order_by(CartItem.added_at.desc())
+        )
+    ).all()
+    items: list[CartItemOut] = []
+    total = Decimal(0)
+    for ci in rows:
+        p = ci.product
+        if not p or p.status != ProductStatus.APPROVED:
+            continue
+        subtotal = Decimal(p.price or 0) * ci.qty
+        total += subtotal
+        items.append(
+            CartItemOut(
+                product_id=p.id,
+                title=p.title,
+                photo_url=p.photo_file_id if (p.photo_file_id or "").startswith("http") else None,
+                price=float(p.price or 0),
+                stock=p.stock,
+                qty=ci.qty,
+                subtotal=float(subtotal),
+            )
+        )
+    return CartOut(items=items, total=float(total), balance=float(user.balance))
+
+
+@router.get("/cart", response_model=CartOut)
+async def get_cart(
+    session: AsyncSession = Depends(_get_session_dep),
+    x_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+) -> CartOut:
+    user = await _current_user(session, x_init_data)
+    return await _build_cart(session, user)
+
+
+@router.post("/cart/{product_id}", response_model=CartOut)
+async def cart_add(
+    product_id: int,
+    session: AsyncSession = Depends(_get_session_dep),
+    x_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+) -> CartOut:
+    user = await _current_user(session, x_init_data)
+    product = await session.get(Product, product_id)
+    if not product or product.status != ProductStatus.APPROVED:
+        raise HTTPException(status_code=404, detail="product not found")
+    existing = await session.scalar(
+        select(CartItem).where(
+            CartItem.user_id == user.id, CartItem.product_id == product_id
+        )
+    )
+    if existing:
+        if existing.qty < max(1, product.stock):
+            existing.qty += 1
+    else:
+        session.add(CartItem(user_id=user.id, product_id=product_id, qty=1))
+    await session.commit()
+    return await _build_cart(session, user)
+
+
+@router.patch("/cart/{product_id}", response_model=CartOut)
+async def cart_set_qty(
+    product_id: int,
+    body: CartQtyIn,
+    session: AsyncSession = Depends(_get_session_dep),
+    x_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+) -> CartOut:
+    user = await _current_user(session, x_init_data)
+    existing = await session.scalar(
+        select(CartItem).where(
+            CartItem.user_id == user.id, CartItem.product_id == product_id
+        )
+    )
+    if existing:
+        if body.qty <= 0:
+            await session.delete(existing)
+        else:
+            existing.qty = body.qty
+        await session.commit()
+    return await _build_cart(session, user)
+
+
+@router.delete("/cart/{product_id}", response_model=CartOut)
+async def cart_remove(
+    product_id: int,
+    session: AsyncSession = Depends(_get_session_dep),
+    x_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+) -> CartOut:
+    user = await _current_user(session, x_init_data)
+    existing = await session.scalar(
+        select(CartItem).where(
+            CartItem.user_id == user.id, CartItem.product_id == product_id
+        )
+    )
+    if existing:
+        await session.delete(existing)
+        await session.commit()
+    return await _build_cart(session, user)
+
+
+@router.post("/checkout", response_model=CheckoutOut)
+async def checkout(
+    session: AsyncSession = Depends(_get_session_dep),
+    x_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+) -> CheckoutOut:
+    """Atomic multi-item checkout: validate stock + balance, debit, create Orders."""
+    from sqlalchemy.orm import selectinload
+
+    user = await _current_user(session, x_init_data)
+    rows = (
+        await session.scalars(
+            select(CartItem)
+            .where(CartItem.user_id == user.id)
+            .options(selectinload(CartItem.product))
+        )
+    ).all()
+    if not rows:
+        raise HTTPException(status_code=400, detail="cart is empty")
+
+    total = Decimal(0)
+    for ci in rows:
+        p = ci.product
+        if not p or p.status != ProductStatus.APPROVED:
+            raise HTTPException(status_code=409, detail=f"product #{ci.product_id} unavailable")
+        if p.stock < ci.qty:
+            raise HTTPException(
+                status_code=409, detail=f"not enough stock for '{p.title}' (have {p.stock}, need {ci.qty})"
+            )
+        total += Decimal(p.price or 0) * ci.qty
+    if Decimal(user.balance) < total:
+        raise HTTPException(status_code=402, detail="insufficient balance")
+
+    # Apply: create one Order per cart line, debit balance, decrement stock, clear cart
+    order_ids: list[int] = []
+    for ci in rows:
+        p = ci.product
+        line_total = Decimal(p.price or 0) * ci.qty
+        p.stock -= ci.qty
+        order = Order(
+            user_id=user.id, product_id=p.id, price=line_total, status=OrderStatus.PAID,
+        )
+        session.add(order)
+        session.add(
+            BalanceTransaction(
+                user_id=user.id, amount=-line_total,
+                reason=f"checkout: product #{p.id} x{ci.qty}", product_id=p.id,
+            )
+        )
+        await session.flush()
+        order_ids.append(order.id)
+        await session.delete(ci)
+    user.balance = Decimal(user.balance) - total
+    await session.commit()
+    await session.refresh(user)
+
+    # Admin notifications (best-effort, post-commit so failure doesn't roll back)
+    for oid, ci in zip(order_ids, rows):
+        try:
+            await _notify_admins_new_order(user, ci.product, oid, Decimal(ci.product.price or 0) * ci.qty)
+        except Exception:
+            pass
+
+    return CheckoutOut(order_ids=order_ids, total=float(total), balance=float(user.balance))

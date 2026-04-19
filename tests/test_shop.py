@@ -4,207 +4,211 @@ from decimal import Decimal
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
-from app.models import Product, ProductStatus, User, UserRole
+from app.models import (
+    CartItem,
+    Favorite,
+    Order,
+    OrderStatus,
+    Product,
+    ProductStatus,
+    User,
+    UserRole,
+)
 
 
-async def test_create_invoice_not_found(session, monkeypatch):
+def _mount(app, session, monkeypatch, user):
     from app.web import api_shop
 
     async def override_session():
         yield session
 
     async def override_current_user(s, x_init_data=None):
-        user = User(tg_id=1, role=UserRole.USER, balance=Decimal("0"))
-        s.add(user)
-        await s.flush()
         return user
 
-    app = FastAPI()
     app.include_router(api_shop.router)
     app.dependency_overrides[api_shop._get_session_dep] = override_session
     monkeypatch.setattr(api_shop, "_current_user", override_current_user)
 
-    client = TestClient(app)
-    res = client.post("/api/shop/create_invoice", json={"product_id": 999})
-    assert res.status_code == 404
 
-
-async def test_create_invoice_out_of_stock(session, monkeypatch):
-    from app.web import api_shop
-
-    user = User(tg_id=2, role=UserRole.USER, balance=Decimal("0"))
+async def test_buy_debits_balance_and_decrements_stock(session, monkeypatch):
+    user = User(tg_id=10, role=UserRole.USER, balance=Decimal("1000"))
     session.add(user)
     await session.flush()
     product = Product(
-        owner_id=user.id,
-        title="Empty",
-        price=Decimal("0"),
-        price_stars=1,
-        stock=0,
-        status=ProductStatus.APPROVED,
+        owner_id=user.id, title="Cream", price=Decimal("250"),
+        stock=5, status=ProductStatus.APPROVED,
     )
     session.add(product)
     await session.commit()
 
-    async def override_session():
-        yield session
+    app = FastAPI()
+    _mount(app, session, monkeypatch, user)
+    client = TestClient(app)
 
-    async def override_current_user(s, x_init_data=None):
-        return user
+    res = client.post("/api/shop/buy", json={"product_id": product.id})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["balance"] == 750.0
+    assert body["stock"] == 4
+
+    await session.refresh(user)
+    await session.refresh(product)
+    assert Decimal(user.balance) == Decimal("750")
+    assert product.stock == 4
+
+    order = await session.scalar(select(Order))
+    assert order is not None and order.status == OrderStatus.PAID
+
+
+async def test_buy_rejects_insufficient_balance(session, monkeypatch):
+    user = User(tg_id=11, role=UserRole.USER, balance=Decimal("10"))
+    session.add(user)
+    await session.flush()
+    product = Product(
+        owner_id=user.id, title="Pricey", price=Decimal("500"),
+        stock=3, status=ProductStatus.APPROVED,
+    )
+    session.add(product)
+    await session.commit()
 
     app = FastAPI()
-    app.include_router(api_shop.router)
-    app.dependency_overrides[api_shop._get_session_dep] = override_session
-    monkeypatch.setattr(api_shop, "_current_user", override_current_user)
-
+    _mount(app, session, monkeypatch, user)
     client = TestClient(app)
-    res = client.post("/api/shop/create_invoice", json={"product_id": product.id})
+    res = client.post("/api/shop/buy", json={"product_id": product.id})
+    assert res.status_code == 402
+
+
+async def test_buy_rejects_out_of_stock(session, monkeypatch):
+    user = User(tg_id=12, role=UserRole.USER, balance=Decimal("1000"))
+    session.add(user)
+    await session.flush()
+    product = Product(
+        owner_id=user.id, title="Empty", price=Decimal("100"),
+        stock=0, status=ProductStatus.APPROVED,
+    )
+    session.add(product)
+    await session.commit()
+
+    app = FastAPI()
+    _mount(app, session, monkeypatch, user)
+    client = TestClient(app)
+    res = client.post("/api/shop/buy", json={"product_id": product.id})
     assert res.status_code == 409
 
 
-async def test_create_invoice_calls_bot(session, monkeypatch):
-    """Happy path: product in stock -> bot.create_invoice_link called, URL returned."""
-    from app.web import api_shop
-
-    user = User(tg_id=3, role=UserRole.USER, balance=Decimal("0"))
-    session.add(user)
-    await session.flush()
-    product = Product(
-        owner_id=user.id,
-        title="Star Cream",
-        description="desc",
-        price=Decimal("0"),
-        price_stars=1,
-        stock=5,
-        status=ProductStatus.APPROVED,
-    )
-    session.add(product)
-    await session.commit()
-
-    async def override_session():
-        yield session
-
-    async def override_current_user(s, x_init_data=None):
-        return user
-
-    class FakeBot:
-        async def create_invoice_link(self, **kwargs):
-            assert kwargs["currency"] == "XTR"
-            assert kwargs["provider_token"] == ""
-            assert kwargs["prices"][0].amount == 1
-            assert kwargs["payload"] == f"buy:{product.id}:{user.tg_id}"
-            return "https://t.me/$fake-invoice"
-
-    app = FastAPI()
-    app.include_router(api_shop.router)
-    app.dependency_overrides[api_shop._get_session_dep] = override_session
-    monkeypatch.setattr(api_shop, "_current_user", override_current_user)
-    monkeypatch.setattr(api_shop, "_get_bot", lambda: FakeBot())
-
-    client = TestClient(app)
-    res = client.post("/api/shop/create_invoice", json={"product_id": product.id})
-    assert res.status_code == 200, res.text
-    assert res.json()["invoice_url"] == "https://t.me/$fake-invoice"
-
-
 async def test_favorites_add_list_remove(session, monkeypatch):
-    from fastapi import FastAPI
-    from app.web import api_shop
-    from app.models import Favorite
-
     user = User(tg_id=77, role=UserRole.USER, balance=Decimal("0"))
     session.add(user)
     await session.flush()
     product = Product(
         owner_id=user.id, title="Heart Me", price=Decimal("0"),
-        price_stars=1, stock=5, status=ProductStatus.APPROVED,
+        stock=5, status=ProductStatus.APPROVED,
     )
     session.add(product)
     await session.commit()
 
-    async def override_session():
-        yield session
-
-    async def override_current_user(s, x_init_data=None):
-        return user
-
     app = FastAPI()
-    app.include_router(api_shop.router)
-    app.dependency_overrides[api_shop._get_session_dep] = override_session
-    monkeypatch.setattr(api_shop, "_current_user", override_current_user)
-
+    _mount(app, session, monkeypatch, user)
     client = TestClient(app)
 
-    # Initially empty
     assert client.get("/api/shop/me/favorite_ids").json() == []
-
-    # Add
     assert client.post(f"/api/shop/favorites/{product.id}").json() == {"ok": True}
     assert client.get("/api/shop/me/favorite_ids").json() == [product.id]
-
     favs = client.get("/api/shop/me/favorites").json()
     assert len(favs) == 1 and favs[0]["title"] == "Heart Me"
-
-    # Add again — idempotent
+    # Idempotent
     client.post(f"/api/shop/favorites/{product.id}")
-    from sqlalchemy import select as _sel
-    count = len((await session.scalars(_sel(Favorite))).all())
+    count = len((await session.scalars(select(Favorite))).all())
     assert count == 1
-
-    # Remove
     assert client.delete(f"/api/shop/favorites/{product.id}").json() == {"ok": True}
     assert client.get("/api/shop/me/favorite_ids").json() == []
 
 
-async def test_successful_payment_creates_order(session, monkeypatch):
-    """Bot handler: parse payload, decrement stock, create Order."""
-    from app.bot.handlers import shop as shop_handler
-    from app.models import Order, OrderStatus
-
-    user = User(tg_id=4, role=UserRole.USER, balance=Decimal("0"))
+async def test_cart_add_increment_and_view(session, monkeypatch):
+    user = User(tg_id=20, role=UserRole.USER, balance=Decimal("5000"))
     session.add(user)
     await session.flush()
-    product = Product(
-        owner_id=user.id, title="P", price=Decimal("0"),
-        price_stars=1, stock=3, status=ProductStatus.APPROVED,
+    p = Product(
+        owner_id=user.id, title="Serum", price=Decimal("300"),
+        stock=10, status=ProductStatus.APPROVED,
     )
-    session.add(product)
+    session.add(p)
     await session.commit()
 
-    # Patch get_session used inside the handler to yield our test session.
-    from contextlib import asynccontextmanager
+    app = FastAPI()
+    _mount(app, session, monkeypatch, user)
+    client = TestClient(app)
 
-    @asynccontextmanager
-    async def fake_get_session():
-        yield session
+    body = client.post(f"/api/shop/cart/{p.id}").json()
+    assert len(body["items"]) == 1 and body["items"][0]["qty"] == 1
+    assert body["total"] == 300.0
 
-    monkeypatch.setattr(shop_handler, "get_session", fake_get_session)
+    # Second POST increments qty
+    body = client.post(f"/api/shop/cart/{p.id}").json()
+    assert body["items"][0]["qty"] == 2
+    assert body["total"] == 600.0
 
-    class FakeSP:
-        invoice_payload = f"buy:{product.id}:{user.tg_id}"
-        total_amount = 1
-        telegram_payment_charge_id = "charge_x"
+    # PATCH set qty
+    body = client.patch(f"/api/shop/cart/{p.id}", json={"qty": 4}).json()
+    assert body["items"][0]["qty"] == 4
+    assert body["total"] == 1200.0
 
-    class FakeUser:
-        id = user.tg_id
-        username = "u"
-        full_name = "U"
-        is_bot = False
+    # PATCH qty=0 removes
+    body = client.patch(f"/api/shop/cart/{p.id}", json={"qty": 0}).json()
+    assert body["items"] == []
 
-    class FakeMsg:
-        from_user = FakeUser()
-        successful_payment = FakeSP()
 
-        async def answer(self, *a, **kw):
-            pass
+async def test_checkout_creates_orders_and_debits_balance(session, monkeypatch):
+    user = User(tg_id=21, role=UserRole.USER, balance=Decimal("1000"))
+    session.add(user)
+    await session.flush()
+    p1 = Product(owner_id=user.id, title="A", price=Decimal("100"),
+                 stock=3, status=ProductStatus.APPROVED)
+    p2 = Product(owner_id=user.id, title="B", price=Decimal("200"),
+                 stock=5, status=ProductStatus.APPROVED)
+    session.add_all([p1, p2])
+    await session.flush()
+    session.add_all([
+        CartItem(user_id=user.id, product_id=p1.id, qty=2),  # 200
+        CartItem(user_id=user.id, product_id=p2.id, qty=1),  # 200
+    ])
+    await session.commit()
 
-    await shop_handler.on_successful_payment(FakeMsg())
+    app = FastAPI()
+    _mount(app, session, monkeypatch, user)
+    client = TestClient(app)
+    res = client.post("/api/shop/checkout")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["total"] == 400.0
+    assert body["balance"] == 600.0
+    assert len(body["order_ids"]) == 2
 
-    await session.refresh(product)
-    assert product.stock == 2
+    await session.refresh(user)
+    await session.refresh(p1)
+    await session.refresh(p2)
+    assert Decimal(user.balance) == Decimal("600")
+    assert p1.stock == 1
+    assert p2.stock == 4
+    remaining_cart = (await session.scalars(select(CartItem))).all()
+    assert remaining_cart == []
 
-    from sqlalchemy import select
-    order = await session.scalar(select(Order))
-    assert order is not None
-    assert order.status == OrderStatus.PAID
+
+async def test_checkout_rejects_insufficient_balance(session, monkeypatch):
+    user = User(tg_id=22, role=UserRole.USER, balance=Decimal("50"))
+    session.add(user)
+    await session.flush()
+    p = Product(owner_id=user.id, title="X", price=Decimal("100"),
+                stock=5, status=ProductStatus.APPROVED)
+    session.add(p)
+    await session.flush()
+    session.add(CartItem(user_id=user.id, product_id=p.id, qty=1))
+    await session.commit()
+
+    app = FastAPI()
+    _mount(app, session, monkeypatch, user)
+    client = TestClient(app)
+    res = client.post("/api/shop/checkout")
+    assert res.status_code == 402

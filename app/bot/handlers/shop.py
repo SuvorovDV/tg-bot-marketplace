@@ -11,15 +11,13 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
-    PreCheckoutQuery,
     WebAppInfo,
 )
-from sqlalchemy import select
 
 from app.bot.deps import get_or_create_user, is_admin
 from app.config import settings
 from app.db import get_session
-from app.models import BalanceTransaction, Order, OrderStatus, Product, ProductStatus, User
+from app.models import BalanceTransaction, User
 
 router = Router()
 
@@ -184,95 +182,6 @@ async def withdraw_finish(message: Message, state: FSMContext) -> None:
             pass
 
 
-# --- Telegram Stars payment flow ---------------------------------------------
-
-def _parse_payload(payload: str) -> tuple[int | None, int | None]:
-    """Parse 'buy:{product_id}:{tg_id}' → (product_id, tg_id). None on error."""
-    try:
-        kind, pid, tg_id = payload.split(":")
-        if kind != "buy":
-            return None, None
-        return int(pid), int(tg_id)
-    except (ValueError, AttributeError):
-        return None, None
-
-
-@router.pre_checkout_query()
-async def on_pre_checkout(query: PreCheckoutQuery) -> None:
-    product_id, _ = _parse_payload(query.invoice_payload)
-    if product_id is None:
-        await query.answer(ok=False, error_message="Некорректный платёж.")
-        return
-    async with get_session() as s:
-        product = await s.get(Product, product_id)
-        if not product or product.status != ProductStatus.APPROVED:
-            await query.answer(ok=False, error_message="Товар недоступен.")
-            return
-        if product.stock <= 0:
-            await query.answer(ok=False, error_message="Товар закончился.")
-            return
-    await query.answer(ok=True)
-
-
-@router.message(F.successful_payment)
-async def on_successful_payment(message: Message) -> None:
-    sp = message.successful_payment
-    product_id, _tg_id = _parse_payload(sp.invoice_payload)
-    if product_id is None:
-        return
-
-    async with get_session() as s:
-        user = await get_or_create_user(s, message.from_user)
-        product = await s.get(Product, product_id)
-        if not product:
-            await message.answer("Ошибка: товар не найден в базе.")
-            return
-        # Decrement stock (allow negative to surface accounting issues visibly)
-        product.stock = max(0, (product.stock or 0) - 1)
-        order = Order(
-            user_id=user.id,
-            product_id=product.id,
-            price=0,  # kept for legacy ruble column; real price is in Stars below
-            price_stars=sp.total_amount,
-            status=OrderStatus.PAID,
-        )
-        s.add(order)
-        s.add(
-            BalanceTransaction(
-                user_id=user.id,
-                amount=0,
-                reason=f"stars purchase: product #{product.id} ({sp.total_amount} ⭐, charge_id={sp.telegram_payment_charge_id})",
-                product_id=product.id,
-            )
-        )
-        await s.commit()
-        await s.refresh(order)
-
-    await message.answer(
-        f"✅ <b>Оплата прошла!</b>\n"
-        f"Заказ <b>#{order.id}</b> — {product.title}\n"
-        f"Списано: <b>{sp.total_amount} ⭐</b>\n\n"
-        f"<i>Статус заказа вы увидите в профиле мини-приложения. "
-        f"Обо всех изменениях мы пришлём уведомление в этот чат.</i>",
-        parse_mode="HTML",
-    )
-
-    # Notify admins (best-effort). Skip if buyer is themselves an admin.
-    buyer_label = (
-        message.from_user.username and f"@{message.from_user.username}"
-    ) or message.from_user.full_name or str(message.from_user.id)
-    for admin_id in settings.admin_id_list:
-        if admin_id == message.from_user.id:
-            continue
-        try:
-            await message.bot.send_message(
-                admin_id,
-                f"🛒 <b>Новый заказ #{order.id}</b>\n"
-                f"Покупатель: {buyer_label} (<code>{message.from_user.id}</code>)\n"
-                f"Товар: <b>{product.title}</b>\n"
-                f"Сумма: <b>{sp.total_amount} ⭐</b>\n\n"
-                f"Открыть в админке: /admin → Orders",
-                parse_mode="HTML",
-            )
-        except Exception:
-            pass
+# Purchases happen via /api/shop/buy (single-tap) or /api/shop/checkout
+# (cart). Admin notifications are issued from those endpoints — see
+# app/web/api_shop.py:_notify_admins_new_order.
