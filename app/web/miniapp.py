@@ -222,6 +222,50 @@ MINIAPP_HTML = r"""<!doctype html>
   .badge.st-cancelled  { background: #e5e7eb; color: #555; }
   .badge.st-refunded   { background: #fadbd2; color: #a84628; }
   .badge.st-pending    { background: #e5e7eb; color: #555; }
+
+  /* category tabs (horizontal scroll) */
+  .cat-tabs {
+    display: flex; gap: 6px; padding: 0 12px 8px; overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .cat-tabs::-webkit-scrollbar { display: none; }
+  .cat-tab {
+    padding: 7px 14px; border-radius: 16px; background: var(--card);
+    color: var(--fg); font-size: 13px; font-weight: 500; white-space: nowrap;
+    cursor: pointer; user-select: none; flex-shrink: 0;
+  }
+  .cat-tab.active { background: var(--accent); color: var(--accent-fg); }
+
+  /* favorite heart button on card */
+  .card .ph { position: relative; }
+  .fav-btn {
+    position: absolute; top: 6px; right: 6px;
+    width: 30px; height: 30px; border-radius: 50%;
+    background: rgba(0,0,0,0.35); color: white;
+    border: none; cursor: pointer; font-size: 14px;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0; line-height: 1;
+  }
+  .fav-btn.on { color: #ff4060; background: rgba(255,255,255,0.92); }
+  .fav-btn-big {
+    position: absolute; top: 14px; right: 14px;
+    width: 42px; height: 42px; border-radius: 50%;
+    background: rgba(0,0,0,0.5); color: white;
+    border: none; cursor: pointer; font-size: 19px;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0; line-height: 1; z-index: 2;
+  }
+  .fav-btn-big.on { color: #ff4060; background: rgba(255,255,255,0.95); }
+
+  /* profile tabs */
+  .tabs { display: flex; margin: 4px 12px 0; border-bottom: 1px solid rgba(0,0,0,0.08); }
+  .tab {
+    flex: 1; text-align: center; padding: 12px 0;
+    font-size: 14px; font-weight: 500; color: var(--muted);
+    cursor: pointer; user-select: none;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -239,6 +283,7 @@ MINIAPP_HTML = r"""<!doctype html>
   <button class="filter-btn" id="filtersBtn">Фильтры<span class="count" id="filterCount"></span></button>
 </div>
 <div id="activeChips" class="chips"></div>
+<div id="catTabs" class="cat-tabs"></div>
 
 <main>
   <div id="list" class="grid"></div>
@@ -248,6 +293,7 @@ MINIAPP_HTML = r"""<!doctype html>
 
 <section id="detail" class="detail">
   <button class="back-btn" id="backBtn">←</button>
+  <button class="fav-btn-big" id="detailFavBtn">♥</button>
   <div class="hero" id="detailHero"></div>
   <div class="body">
     <h2 class="title" id="detailTitle"></h2>
@@ -270,9 +316,19 @@ MINIAPP_HTML = r"""<!doctype html>
     <div class="bal"><span id="profileBalance">0</span> ₽</div>
   </div>
 
-  <div class="section-title">История покупок</div>
-  <div id="orders" class="orders"></div>
-  <div id="ordersEmpty" class="empty" style="display:none">Заказов пока нет</div>
+  <div class="tabs" id="profileTabs">
+    <div class="tab active" data-tab="history">История</div>
+    <div class="tab" data-tab="favorites">Избранное</div>
+  </div>
+
+  <div id="tabHistory">
+    <div id="orders" class="orders" style="padding-top:12px"></div>
+    <div id="ordersEmpty" class="empty" style="display:none">Заказов пока нет</div>
+  </div>
+  <div id="tabFavorites" style="display:none">
+    <div id="favorites" class="orders" style="padding-top:12px"></div>
+    <div id="favoritesEmpty" class="empty" style="display:none">В избранном пусто</div>
+  </div>
 </section>
 
 <div id="filterSheet" class="sheet">
@@ -326,6 +382,8 @@ let currentDetail = null;
 let filterTree = [];                   // [{key, label, options: [{id, label}]}]
 let selectedOptions = new Set();
 let searchQuery = "";
+let favoriteIds = new Set();           // product IDs in user's wishlist
+let activeCategoryId = null;           // FilterOption.id of selected category tab, or null = Все
 
 // ---- balance ----
 async function loadBalance() {
@@ -341,6 +399,33 @@ async function loadBalance() {
 async function loadFilters() {
   try { filterTree = await api("/api/shop/filters"); } catch (e) { filterTree = []; }
   renderFilterGroups();
+  renderCategoryTabs();
+}
+
+function renderCategoryTabs() {
+  const catGroup = filterTree.find(g => g.key === "category");
+  const el = $("catTabs");
+  if (!catGroup) { el.innerHTML = ""; return; }
+  const tabs = [{id: null, label: "Все"}, ...catGroup.options];
+  el.innerHTML = tabs.map(t =>
+    `<div class="cat-tab${t.id === activeCategoryId ? ' active' : ''}" data-id="${t.id ?? ''}">${escapeHtml(t.label)}</div>`
+  ).join("");
+  el.querySelectorAll(".cat-tab").forEach(tabEl => {
+    tabEl.addEventListener("click", () => {
+      const raw = tabEl.dataset.id;
+      const newId = raw === "" ? null : Number(raw);
+      if (newId === activeCategoryId) return;
+      // Strip any existing category-key options, add the new one if not null.
+      const catIds = new Set((catGroup.options || []).map(o => o.id));
+      selectedOptions = new Set([...selectedOptions].filter(id => !catIds.has(id)));
+      if (newId != null) selectedOptions.add(newId);
+      activeCategoryId = newId;
+      renderCategoryTabs();
+      renderChipsAndCount();
+      renderFilterGroups();
+      loadProducts();
+    });
+  });
 }
 
 function renderFilterGroups() {
@@ -374,12 +459,44 @@ function renderChipsAndCount() {
   ).join("");
   $("activeChips").querySelectorAll(".chip").forEach(el => {
     el.addEventListener("click", () => {
-      selectedOptions.delete(Number(el.dataset.id));
+      const id = Number(el.dataset.id);
+      selectedOptions.delete(id);
+      if (id === activeCategoryId) activeCategoryId = null;
       renderFilterGroups();
       renderChipsAndCount();
+      renderCategoryTabs();
       loadProducts();
     });
   });
+}
+
+// ---- favorites ----
+async function loadFavoriteIds() {
+  try {
+    const ids = await api("/api/shop/me/favorite_ids");
+    favoriteIds = new Set(ids);
+  } catch (e) { favoriteIds = new Set(); }
+}
+
+async function toggleFavorite(productId) {
+  const isFav = favoriteIds.has(productId);
+  try {
+    if (isFav) {
+      await api(`/api/shop/favorites/${productId}`, { method: "DELETE" });
+      favoriteIds.delete(productId);
+    } else {
+      await api(`/api/shop/favorites/${productId}`, { method: "POST" });
+      favoriteIds.add(productId);
+    }
+    tg?.HapticFeedback?.impactOccurred("light");
+  } catch (e) {
+    toast("Не удалось обновить избранное", "err");
+  }
+}
+
+function updateHeartButton(btn, productId) {
+  if (favoriteIds.has(productId)) btn.classList.add("on");
+  else btn.classList.remove("on");
 }
 
 // ---- products ----
@@ -409,7 +526,9 @@ async function loadProducts() {
   }
   list.innerHTML = products.map(p => `
     <div class="card" data-id="${p.id}">
-      <div class="ph" style="${p.photo_url ? `background-image:url('${p.photo_url}')` : ''}"></div>
+      <div class="ph" style="${p.photo_url ? `background-image:url('${p.photo_url}')` : ''}">
+        <button class="fav-btn${favoriteIds.has(p.id) ? ' on' : ''}" data-fav="${p.id}" aria-label="Избранное">♥</button>
+      </div>
       <div class="body">
         <p class="title">${escapeHtml(p.title)}</p>
         <div class="price">⭐ ${p.price_stars}</div>
@@ -419,6 +538,14 @@ async function loadProducts() {
   `).join("");
   list.querySelectorAll(".card").forEach(el => {
     el.addEventListener("click", () => openDetail(Number(el.dataset.id)));
+  });
+  list.querySelectorAll(".fav-btn").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const id = Number(btn.dataset.fav);
+      await toggleFavorite(id);
+      updateHeartButton(btn, id);
+    });
   });
 }
 
@@ -435,6 +562,7 @@ function openDetail(id) {
   $("detailDesc").textContent = p.description || "";
   $("buyBtn").disabled = p.stock <= 0;
   $("buyBtn").textContent = p.stock > 0 ? `Купить за ⭐ ${p.price_stars}` : "Нет в наличии";
+  updateHeartButton($("detailFavBtn"), p.id);
   $("detail").classList.add("open");
   tg?.BackButton?.show();
 }
@@ -446,7 +574,15 @@ function closeDetail() {
 }
 
 $("backBtn").addEventListener("click", closeDetail);
-tg?.BackButton?.onClick(closeDetail);
+
+$("detailFavBtn").addEventListener("click", async () => {
+  if (!currentDetail) return;
+  await toggleFavorite(currentDetail.id);
+  updateHeartButton($("detailFavBtn"), currentDetail.id);
+  // Sync the card heart on the grid too
+  const cardBtn = document.querySelector(`.fav-btn[data-fav="${currentDetail.id}"]`);
+  if (cardBtn) updateHeartButton(cardBtn, currentDetail.id);
+});
 
 $("buyBtn").addEventListener("click", async () => {
   if (!currentDetail) return;
@@ -539,15 +675,7 @@ const STATUS_LABEL = {
   pending: "Ожидает оплаты",
 };
 
-async function openProfile() {
-  // Fill header + fetch orders
-  try {
-    const me = await api("/api/shop/me");
-    $("profileName").textContent = me.full_name || ("Пользователь " + me.tg_id);
-    $("profileBalance").textContent = fmt(me.balance);
-  } catch (e) {
-    $("profileName").textContent = "—";
-  }
+async function loadOrdersTab() {
   $("orders").innerHTML = '<div class="empty"><span class="spinner"></span></div>';
   $("ordersEmpty").style.display = "none";
   let orders = [];
@@ -555,29 +683,107 @@ async function openProfile() {
   if (!orders.length) {
     $("orders").innerHTML = "";
     $("ordersEmpty").style.display = "block";
-  } else {
-    $("ordersEmpty").style.display = "none";
-    $("orders").innerHTML = orders.map(o => {
-      const d = o.created_at ? new Date(o.created_at) : null;
-      const dateStr = d ? d.toLocaleDateString("ru-RU", {day:"numeric", month:"short", year:"numeric"}) : "";
-      const status = o.status || "paid";
-      return `
-        <div class="order">
-          <div class="ph" style="${o.photo_url ? `background-image:url('${o.photo_url}')` : ''}"></div>
-          <div class="info">
-            <p class="title">${escapeHtml(o.product_title)}</p>
-            <div class="meta">#${o.id} · ${dateStr}</div>
-          </div>
-          <div class="right">
-            <div class="price">⭐ ${o.price_stars}</div>
-            <span class="badge st-${status}">${escapeHtml(STATUS_LABEL[status] || status)}</span>
-          </div>
-        </div>`;
-    }).join("");
+    return;
   }
+  $("ordersEmpty").style.display = "none";
+  $("orders").innerHTML = orders.map(o => {
+    const d = o.created_at ? new Date(o.created_at) : null;
+    const dateStr = d ? d.toLocaleDateString("ru-RU", {day:"numeric", month:"short", year:"numeric"}) : "";
+    const status = o.status || "paid";
+    return `
+      <div class="order">
+        <div class="ph" style="${o.photo_url ? `background-image:url('${o.photo_url}')` : ''}"></div>
+        <div class="info">
+          <p class="title">${escapeHtml(o.product_title)}</p>
+          <div class="meta">#${o.id} · ${dateStr}</div>
+        </div>
+        <div class="right">
+          <div class="price">⭐ ${o.price_stars}</div>
+          <span class="badge st-${status}">${escapeHtml(STATUS_LABEL[status] || status)}</span>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+async function loadFavoritesTab() {
+  $("favorites").innerHTML = '<div class="empty"><span class="spinner"></span></div>';
+  $("favoritesEmpty").style.display = "none";
+  let favs = [];
+  try { favs = await api("/api/shop/me/favorites"); } catch (e) { favs = []; }
+  if (!favs.length) {
+    $("favorites").innerHTML = "";
+    $("favoritesEmpty").style.display = "block";
+    return;
+  }
+  $("favoritesEmpty").style.display = "none";
+  $("favorites").innerHTML = favs.map(f => `
+    <div class="order" data-open-product="${f.product_id}">
+      <div class="ph" style="${f.photo_url ? `background-image:url('${f.photo_url}')` : ''}"></div>
+      <div class="info">
+        <p class="title">${escapeHtml(f.title)}</p>
+        <div class="meta">${f.stock > 0 ? 'В наличии: ' + f.stock : 'Нет в наличии'}</div>
+      </div>
+      <div class="right">
+        <div class="price">⭐ ${f.price_stars}</div>
+        <button class="fav-btn on" data-unfav="${f.product_id}" aria-label="Убрать из избранного" style="position:static">♥</button>
+      </div>
+    </div>
+  `).join("");
+  $("favorites").querySelectorAll("[data-unfav]").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const id = Number(btn.dataset.unfav);
+      await toggleFavorite(id);
+      // Remove the row + update grid card heart
+      btn.closest(".order").remove();
+      const cardBtn = document.querySelector(`.fav-btn[data-fav="${id}"]`);
+      if (cardBtn) updateHeartButton(cardBtn, id);
+      if (!$("favorites").querySelector(".order")) {
+        $("favoritesEmpty").style.display = "block";
+      }
+    });
+  });
+  $("favorites").querySelectorAll("[data-open-product]").forEach(row => {
+    row.addEventListener("click", () => {
+      const pid = Number(row.dataset.openProduct);
+      // If product is in current grid, open its detail; else fetch.
+      const p = products.find(x => x.id === pid);
+      if (p) {
+        closeProfile();
+        setTimeout(() => openDetail(pid), 50);
+      }
+    });
+  });
+}
+
+function switchProfileTab(name) {
+  $("profileTabs").querySelectorAll(".tab").forEach(t => {
+    t.classList.toggle("active", t.dataset.tab === name);
+  });
+  $("tabHistory").style.display = name === "history" ? "" : "none";
+  $("tabFavorites").style.display = name === "favorites" ? "" : "none";
+  if (name === "favorites") loadFavoritesTab();
+}
+
+async function openProfile() {
+  try {
+    const me = await api("/api/shop/me");
+    $("profileName").textContent = me.full_name || ("Пользователь " + me.tg_id);
+    $("profileBalance").textContent = fmt(me.balance);
+  } catch (e) {
+    $("profileName").textContent = "—";
+  }
+  switchProfileTab("history");
+  loadOrdersTab();
   $("profile").classList.add("open");
   tg?.BackButton?.show();
 }
+
+$("profileTabs").addEventListener("click", (e) => {
+  const tab = e.target.closest(".tab");
+  if (!tab) return;
+  switchProfileTab(tab.dataset.tab);
+});
 
 function closeProfile() {
   $("profile").classList.remove("open");
@@ -594,9 +800,10 @@ tg?.BackButton?.onClick(() => {
   else if ($("detail").classList.contains("open")) closeDetail();
 });
 
-loadBalance();
-loadFilters();
-loadProducts();
+(async () => {
+  await loadFavoriteIds();
+  await Promise.all([loadBalance(), loadFilters(), loadProducts()]);
+})();
 </script>
 </body>
 </html>

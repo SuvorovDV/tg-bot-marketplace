@@ -153,6 +153,19 @@ class BalanceTransaction(Base):
     user: Mapped[User] = relationship(back_populates="transactions")
 
 
+class Favorite(Base):
+    __tablename__ = "favorites"
+    __table_args__ = (UniqueConstraint("user_id", "product_id", name="uq_favorite_user_product"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    user: Mapped[User] = relationship()
+    product: Mapped[Product] = relationship()
+
+
 class Section(Base):
     """Dynamic bot navigation: admin can rename/toggle sections without redeploy."""
 

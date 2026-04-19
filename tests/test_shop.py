@@ -108,6 +108,55 @@ async def test_create_invoice_calls_bot(session, monkeypatch):
     assert res.json()["invoice_url"] == "https://t.me/$fake-invoice"
 
 
+async def test_favorites_add_list_remove(session, monkeypatch):
+    from fastapi import FastAPI
+    from app.web import api_shop
+    from app.models import Favorite
+
+    user = User(tg_id=77, role=UserRole.USER, balance=Decimal("0"))
+    session.add(user)
+    await session.flush()
+    product = Product(
+        owner_id=user.id, title="Heart Me", price=Decimal("0"),
+        price_stars=1, stock=5, status=ProductStatus.APPROVED,
+    )
+    session.add(product)
+    await session.commit()
+
+    async def override_session():
+        yield session
+
+    async def override_current_user(s, x_init_data=None):
+        return user
+
+    app = FastAPI()
+    app.include_router(api_shop.router)
+    app.dependency_overrides[api_shop._get_session_dep] = override_session
+    monkeypatch.setattr(api_shop, "_current_user", override_current_user)
+
+    client = TestClient(app)
+
+    # Initially empty
+    assert client.get("/api/shop/me/favorite_ids").json() == []
+
+    # Add
+    assert client.post(f"/api/shop/favorites/{product.id}").json() == {"ok": True}
+    assert client.get("/api/shop/me/favorite_ids").json() == [product.id]
+
+    favs = client.get("/api/shop/me/favorites").json()
+    assert len(favs) == 1 and favs[0]["title"] == "Heart Me"
+
+    # Add again — idempotent
+    client.post(f"/api/shop/favorites/{product.id}")
+    from sqlalchemy import select as _sel
+    count = len((await session.scalars(_sel(Favorite))).all())
+    assert count == 1
+
+    # Remove
+    assert client.delete(f"/api/shop/favorites/{product.id}").json() == {"ok": True}
+    assert client.get("/api/shop/me/favorite_ids").json() == []
+
+
 async def test_successful_payment_creates_order(session, monkeypatch):
     """Bot handler: parse payload, decrement stock, create Order."""
     from app.bot.handlers import shop as shop_handler

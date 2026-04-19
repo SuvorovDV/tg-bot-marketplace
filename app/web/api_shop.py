@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db import SessionLocal
 from app.models import (
+    Favorite,
     Order,
     Product,
     ProductStatus,
@@ -153,6 +154,14 @@ class OrderOut(BaseModel):
     created_at: str
 
 
+class FavoriteOut(BaseModel):
+    product_id: int
+    title: str
+    photo_url: str | None = None
+    price_stars: int
+    stock: int
+
+
 def _product_to_out(p: Product) -> ProductOut:
     return ProductOut(
         id=p.id,
@@ -229,6 +238,93 @@ async def me(
 ) -> MeOut:
     user = await _current_user(session, x_init_data)
     return MeOut(tg_id=user.tg_id, full_name=user.full_name, balance=float(user.balance))
+
+
+@router.get("/me/favorite_ids", response_model=list[int])
+async def my_favorite_ids(
+    session: AsyncSession = Depends(_get_session_dep),
+    x_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+) -> list[int]:
+    user = await _current_user(session, x_init_data)
+    rows = (
+        await session.scalars(
+            select(Favorite.product_id).where(Favorite.user_id == user.id)
+        )
+    ).all()
+    return list(rows)
+
+
+@router.get("/me/favorites", response_model=list[FavoriteOut])
+async def my_favorites(
+    session: AsyncSession = Depends(_get_session_dep),
+    x_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+) -> list[FavoriteOut]:
+    from sqlalchemy.orm import selectinload
+
+    user = await _current_user(session, x_init_data)
+    rows = (
+        await session.scalars(
+            select(Favorite)
+            .where(Favorite.user_id == user.id)
+            .options(selectinload(Favorite.product))
+            .order_by(Favorite.created_at.desc())
+        )
+    ).all()
+    out: list[FavoriteOut] = []
+    for f in rows:
+        p = f.product
+        if not p:
+            continue
+        photo = p.photo_file_id
+        out.append(
+            FavoriteOut(
+                product_id=p.id,
+                title=p.title,
+                photo_url=photo if (photo or "").startswith("http") else None,
+                price_stars=p.price_stars or 1,
+                stock=p.stock,
+            )
+        )
+    return out
+
+
+@router.post("/favorites/{product_id}")
+async def add_favorite(
+    product_id: int,
+    session: AsyncSession = Depends(_get_session_dep),
+    x_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+) -> dict:
+    user = await _current_user(session, x_init_data)
+    product = await session.get(Product, product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="product not found")
+    existing = await session.scalar(
+        select(Favorite).where(
+            Favorite.user_id == user.id, Favorite.product_id == product_id
+        )
+    )
+    if not existing:
+        session.add(Favorite(user_id=user.id, product_id=product_id))
+        await session.commit()
+    return {"ok": True}
+
+
+@router.delete("/favorites/{product_id}")
+async def remove_favorite(
+    product_id: int,
+    session: AsyncSession = Depends(_get_session_dep),
+    x_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+) -> dict:
+    user = await _current_user(session, x_init_data)
+    existing = await session.scalar(
+        select(Favorite).where(
+            Favorite.user_id == user.id, Favorite.product_id == product_id
+        )
+    )
+    if existing:
+        await session.delete(existing)
+        await session.commit()
+    return {"ok": True}
 
 
 @router.get("/me/orders", response_model=list[OrderOut])
