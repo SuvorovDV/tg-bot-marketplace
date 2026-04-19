@@ -6,8 +6,11 @@ by `AdminAuth.authenticate()` from the session flag.
 """
 from __future__ import annotations
 
+import logging
+
 from sqladmin import ModelView
 
+from app.db import SessionLocal
 from app.models import (
     BalanceTransaction,
     Category,
@@ -19,6 +22,18 @@ from app.models import (
     User,
 )
 from app.web.auth import is_editor_mode
+
+log = logging.getLogger(__name__)
+
+_ORDER_STATUS_LABELS = {
+    "pending": "Ожидает оплаты",
+    "paid": "Оплачен",
+    "processing": "В обработке",
+    "shipped": "Отправлен",
+    "delivered": "Доставлен",
+    "cancelled": "Отменён",
+    "refunded": "Возвращён",
+}
 
 
 class _DynamicBase(ModelView):
@@ -120,6 +135,32 @@ class OrderEditor(_DynamicBase, model=Order):
     column_sortable_list = [Order.id, Order.status, Order.created_at]
     column_default_sort = [(Order.created_at, True)]
     form_columns = [Order.user, Order.product, Order.price_stars, Order.status]
+
+    async def after_model_change(self, data, model, is_created, request) -> None:
+        # Notify the buyer in Telegram when admin changes an order's status.
+        # Fires on every edit — acceptable for demo; status is the main mutable field.
+        if is_created:
+            return
+        try:
+            async with SessionLocal() as s:
+                user = await s.get(User, model.user_id)
+            if not user:
+                return
+            status_value = (
+                model.status.value if hasattr(model.status, "value") else str(model.status)
+            )
+            label = _ORDER_STATUS_LABELS.get(status_value, status_value)
+            from app.web.api_shop import _get_bot
+            bot = _get_bot()
+            await bot.send_message(
+                user.tg_id,
+                f"📦 Заказ <b>#{model.id}</b>\n"
+                f"Новый статус: <b>{label}</b>",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            # Never block admin save if push fails (user blocked bot, network, etc.)
+            log.warning("order status push failed: %s", e)
 
 
 EDITOR_VIEWS = [

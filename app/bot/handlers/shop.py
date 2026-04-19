@@ -252,6 +252,27 @@ async def on_successful_payment(message: Message) -> None:
         f"✅ <b>Оплата прошла!</b>\n"
         f"Заказ <b>#{order.id}</b> — {product.title}\n"
         f"Списано: <b>{sp.total_amount} ⭐</b>\n\n"
-        f"<i>Демо-покупка: реальной доставки не будет.</i>",
+        f"<i>Статус заказа вы увидите в профиле мини-приложения. "
+        f"Обо всех изменениях мы пришлём уведомление в этот чат.</i>",
         parse_mode="HTML",
     )
+
+    # Notify admins (best-effort). Skip if buyer is themselves an admin.
+    buyer_label = (
+        message.from_user.username and f"@{message.from_user.username}"
+    ) or message.from_user.full_name or str(message.from_user.id)
+    for admin_id in settings.admin_id_list:
+        if admin_id == message.from_user.id:
+            continue
+        try:
+            await message.bot.send_message(
+                admin_id,
+                f"🛒 <b>Новый заказ #{order.id}</b>\n"
+                f"Покупатель: {buyer_label} (<code>{message.from_user.id}</code>)\n"
+                f"Товар: <b>{product.title}</b>\n"
+                f"Сумма: <b>{sp.total_amount} ⭐</b>\n\n"
+                f"Открыть в админке: /admin → Orders",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
