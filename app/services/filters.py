@@ -36,6 +36,8 @@ async def get_filter_tree(session: AsyncSession) -> dict[str, list[FilterOption]
 async def search_products(
     session: AsyncSession,
     selected_option_ids: list[int],
+    *,
+    query: str | None = None,
     limit: int = 20,
     offset: int = 0,
 ) -> list[Product]:
@@ -43,8 +45,12 @@ async def search_products(
     Multi-checkbox filter semantics:
       - Options within the same key => OR (brand=Chanel OR brand=Dior)
       - Options across keys => AND (brand matches AND skin_type matches)
+      - query: case-insensitive substring match on title (ANDed with filters)
     """
     stmt = select(Product).where(Product.status == ProductStatus.APPROVED)
+
+    if query:
+        stmt = stmt.where(Product.title.ilike(f"%{query}%"))
 
     if selected_option_ids:
         # Resolve option -> key mapping to group selections

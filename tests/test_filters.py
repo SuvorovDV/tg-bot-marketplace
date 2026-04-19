@@ -94,3 +94,24 @@ async def test_search_multiple_brands_and_one_skin(session):
         [data["brand_chanel"].id, data["brand_dior"].id, data["skin_dry"].id],
     )
     assert {p.id for p in results} == {data["p2"].id, data["p3"].id}
+
+
+async def test_search_by_query_matches_title(session):
+    data = await _seed(session)
+    results = await search_products(session, [], query="Dior")
+    assert {p.id for p in results} == {data["p2"].id}
+
+
+async def test_search_query_is_case_insensitive(session):
+    data = await _seed(session)
+    results = await search_products(session, [], query="chanel")
+    assert {p.id for p in results} == {data["p1"].id, data["p3"].id}
+
+
+async def test_search_query_combines_with_filters(session):
+    data = await _seed(session)
+    # brand=Chanel AND title~"Serum" -> p3 only
+    results = await search_products(
+        session, [data["brand_chanel"].id], query="serum"
+    )
+    assert {p.id for p in results} == {data["p3"].id}

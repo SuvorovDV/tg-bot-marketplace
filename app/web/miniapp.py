@@ -23,13 +23,50 @@ MINIAPP_HTML = r"""<!doctype html>
   html, body { margin:0; padding:0; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--fg); }
   body { min-height: 100vh; padding-bottom: env(safe-area-inset-bottom); }
   header {
-    position: sticky; top: 0; z-index: 10;
+    position: sticky; top: 0; z-index: 11;
     background: var(--bg); border-bottom: 1px solid rgba(0,0,0,0.06);
     padding: 12px 16px; display: flex; align-items: center; justify-content: space-between;
   }
   h1 { font-size: 17px; margin: 0; font-weight: 600; }
   .balance { font-size: 13px; color: var(--muted); }
   .balance b { color: var(--fg); font-weight: 600; }
+
+  /* toolbar: search + filter trigger */
+  .toolbar {
+    position: sticky; top: 49px; z-index: 10;
+    background: var(--bg); padding: 8px 12px;
+    display: flex; gap: 8px;
+    border-bottom: 1px solid rgba(0,0,0,0.04);
+  }
+  .toolbar input {
+    flex: 1; padding: 10px 14px; border: none; border-radius: 10px;
+    background: var(--card); color: var(--fg); font-size: 14px; outline: none;
+    -webkit-appearance: none;
+  }
+  .toolbar input::placeholder { color: var(--muted); }
+  .filter-btn {
+    padding: 10px 14px; border: none; border-radius: 10px;
+    background: var(--card); color: var(--fg);
+    font-size: 14px; font-weight: 500; cursor: pointer;
+    position: relative; white-space: nowrap;
+  }
+  .filter-btn .count {
+    position: absolute; top: -4px; right: -4px;
+    min-width: 18px; height: 18px; padding: 0 5px;
+    border-radius: 10px; background: var(--accent); color: var(--accent-fg);
+    font-size: 11px; line-height: 18px; text-align: center; font-weight: 600;
+  }
+  .filter-btn .count:empty { display: none; }
+  .chips {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    padding: 6px 12px 0;
+  }
+  .chip {
+    background: var(--accent); color: var(--accent-fg);
+    padding: 4px 10px; border-radius: 12px;
+    font-size: 12px; cursor: pointer; user-select: none;
+  }
+
   main { padding: 12px; }
   .grid {
     display: grid; gap: 10px;
@@ -79,6 +116,45 @@ MINIAPP_HTML = r"""<!doctype html>
   }
   button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
+  /* filter bottom-sheet modal */
+  .sheet { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 30; display: none; }
+  .sheet.open { display: block; }
+  .sheet .body {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    background: var(--bg); border-radius: 16px 16px 0 0;
+    max-height: 85vh; overflow-y: auto;
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+  }
+  .sheet .body h3 { font-size: 17px; margin: 0 0 14px; font-weight: 600; }
+  .filter-group { margin-bottom: 18px; }
+  .filter-group .g-title {
+    font-size: 11px; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; margin: 0 0 8px; letter-spacing: 0.4px;
+  }
+  .filter-opts {
+    display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px;
+  }
+  .filter-opt {
+    padding: 9px 12px; background: var(--card); border-radius: 8px;
+    font-size: 13px; cursor: pointer; text-align: center; user-select: none;
+    transition: background 0.1s;
+  }
+  .filter-opt.selected { background: var(--accent); color: var(--accent-fg); }
+  .sheet-actions {
+    display: flex; gap: 8px;
+    position: sticky; bottom: 0; background: var(--bg); padding-top: 10px;
+  }
+  .btn-secondary {
+    flex: 1; padding: 12px; border-radius: 10px; border: none;
+    background: var(--card); color: var(--fg);
+    font-size: 15px; font-weight: 500; cursor: pointer;
+  }
+  .btn-primary {
+    flex: 1; padding: 12px; border-radius: 10px; border: none;
+    background: var(--accent); color: var(--accent-fg);
+    font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+
   .toast {
     position: fixed; left: 50%; top: 20px; transform: translateX(-50%);
     background: rgba(0,0,0,0.85); color: #fff;
@@ -102,6 +178,12 @@ MINIAPP_HTML = r"""<!doctype html>
   <div class="balance">Баланс: <b id="balance">…</b> ₽</div>
 </header>
 
+<div class="toolbar">
+  <input id="searchInput" type="search" placeholder="Поиск по названию" autocomplete="off">
+  <button class="filter-btn" id="filtersBtn">Фильтры<span class="count" id="filterCount"></span></button>
+</div>
+<div id="activeChips" class="chips"></div>
+
 <main>
   <div id="list" class="grid"></div>
   <div id="empty" class="empty" style="display:none">Каталог пуст</div>
@@ -121,6 +203,17 @@ MINIAPP_HTML = r"""<!doctype html>
     <button class="primary" id="buyBtn">Купить</button>
   </div>
 </section>
+
+<div id="filterSheet" class="sheet">
+  <div class="body">
+    <h3>Фильтры</h3>
+    <div id="filterGroups"></div>
+    <div class="sheet-actions">
+      <button class="btn-secondary" id="clearFilters">Сбросить</button>
+      <button class="btn-primary" id="applyFilters">Применить</button>
+    </div>
+  </div>
+</div>
 
 <div id="toast" class="toast"></div>
 
@@ -150,9 +243,20 @@ function toast(msg, kind = "") {
   setTimeout(() => el.classList.remove("show"), 2500);
 }
 
+function escapeHtml(s) {
+  return String(s || "").replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+
+// ---- state ----
 let products = [];
 let currentDetail = null;
+let filterTree = [];                   // [{key, label, options: [{id, label}]}]
+let selectedOptions = new Set();
+let searchQuery = "";
 
+// ---- balance ----
 async function loadBalance() {
   try {
     const me = await api("/api/shop/me");
@@ -162,19 +266,76 @@ async function loadBalance() {
   }
 }
 
+// ---- filters ----
+async function loadFilters() {
+  try { filterTree = await api("/api/shop/filters"); } catch (e) { filterTree = []; }
+  renderFilterGroups();
+}
+
+function renderFilterGroups() {
+  const html = filterTree.map(group => `
+    <div class="filter-group">
+      <div class="g-title">${escapeHtml(group.label)}</div>
+      <div class="filter-opts">
+        ${group.options.map(o => `
+          <div class="filter-opt${selectedOptions.has(o.id) ? ' selected' : ''}" data-id="${o.id}">${escapeHtml(o.label)}</div>
+        `).join("")}
+      </div>
+    </div>
+  `).join("");
+  $("filterGroups").innerHTML = html || '<div class="empty">Фильтры не настроены</div>';
+  $("filterGroups").querySelectorAll(".filter-opt").forEach(el => {
+    el.addEventListener("click", () => {
+      const id = Number(el.dataset.id);
+      if (selectedOptions.has(id)) selectedOptions.delete(id);
+      else selectedOptions.add(id);
+      el.classList.toggle("selected");
+    });
+  });
+}
+
+function renderChipsAndCount() {
+  const labels = {};
+  filterTree.forEach(g => g.options.forEach(o => labels[o.id] = o.label));
+  $("filterCount").textContent = selectedOptions.size > 0 ? String(selectedOptions.size) : "";
+  $("activeChips").innerHTML = [...selectedOptions].map(id =>
+    `<span class="chip" data-id="${id}">${escapeHtml(labels[id] || "?")} ×</span>`
+  ).join("");
+  $("activeChips").querySelectorAll(".chip").forEach(el => {
+    el.addEventListener("click", () => {
+      selectedOptions.delete(Number(el.dataset.id));
+      renderFilterGroups();
+      renderChipsAndCount();
+      loadProducts();
+    });
+  });
+}
+
+// ---- products ----
 async function loadProducts() {
+  $("empty").style.display = "none";
+  $("loading").innerHTML = '<span class="spinner"></span>';
+  $("loading").style.display = "";
+
+  const params = new URLSearchParams();
+  if (searchQuery) params.set("q", searchQuery);
+  if (selectedOptions.size) params.set("options", [...selectedOptions].join(","));
+  const url = "/api/shop/products" + (params.toString() ? "?" + params.toString() : "");
+
   try {
-    products = await api("/api/shop/products");
+    products = await api(url);
   } catch (e) {
     $("loading").textContent = "Ошибка загрузки";
     return;
   }
   $("loading").style.display = "none";
+  const list = $("list");
   if (!products.length) {
+    list.innerHTML = "";
+    $("empty").textContent = (searchQuery || selectedOptions.size) ? "Ничего не найдено" : "Каталог пуст";
     $("empty").style.display = "block";
     return;
   }
-  const list = $("list");
   list.innerHTML = products.map(p => `
     <div class="card" data-id="${p.id}">
       <div class="ph" style="${p.photo_url ? `background-image:url('${p.photo_url}')` : ''}"></div>
@@ -190,12 +351,7 @@ async function loadProducts() {
   });
 }
 
-function escapeHtml(s) {
-  return String(s || "").replace(/[&<>"']/g, c => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-  }[c]));
-}
-
+// ---- detail + buy ----
 function openDetail(id) {
   const p = products.find(x => x.id === id);
   if (!p) return;
@@ -271,7 +427,38 @@ $("buyBtn").addEventListener("click", async () => {
   });
 });
 
+// ---- search + filter wiring ----
+let searchTimer;
+$("searchInput").addEventListener("input", (e) => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    searchQuery = e.target.value.trim();
+    loadProducts();
+  }, 300);
+});
+
+$("filtersBtn").addEventListener("click", () => {
+  renderFilterGroups();
+  $("filterSheet").classList.add("open");
+});
+
+$("filterSheet").addEventListener("click", (e) => {
+  if (e.target.id === "filterSheet") $("filterSheet").classList.remove("open");
+});
+
+$("applyFilters").addEventListener("click", () => {
+  $("filterSheet").classList.remove("open");
+  renderChipsAndCount();
+  loadProducts();
+});
+
+$("clearFilters").addEventListener("click", () => {
+  selectedOptions.clear();
+  renderFilterGroups();
+});
+
 loadBalance();
+loadFilters();
 loadProducts();
 </script>
 </body>

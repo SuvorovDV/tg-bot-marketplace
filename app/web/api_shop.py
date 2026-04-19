@@ -22,6 +22,15 @@ from app.models import (
     ProductStatus,
     User,
 )
+from app.services.filters import get_filter_tree, search_products
+
+# Human-friendly labels for filter group keys shown in the Mini App.
+_FILTER_KEY_LABELS: dict[str, str] = {
+    "brand": "Бренд",
+    "skin_type": "Тип кожи",
+    "category": "Категория",
+    "price_range": "Цена",
+}
 
 router = APIRouter(prefix="/api/shop", tags=["shop"])
 
@@ -161,16 +170,35 @@ def _get_bot() -> Bot:
 
 @router.get("/products", response_model=list[ProductOut])
 async def list_products(
+    q: str = "",
+    options: str = "",
     session: AsyncSession = Depends(_get_session_dep),
 ) -> list[ProductOut]:
-    rows = (
-        await session.scalars(
-            select(Product)
-            .where(Product.status == ProductStatus.APPROVED)
-            .order_by(Product.created_at.desc())
-        )
-    ).all()
+    option_ids = [int(x) for x in options.split(",") if x.strip().isdigit()] if options else []
+    query = q.strip() or None
+    rows = await search_products(session, option_ids, query=query, limit=500)
     return [_product_to_out(p) for p in rows]
+
+
+class FilterGroupOut(BaseModel):
+    key: str
+    label: str
+    options: list[dict]
+
+
+@router.get("/filters", response_model=list[FilterGroupOut])
+async def list_filters(
+    session: AsyncSession = Depends(_get_session_dep),
+) -> list[FilterGroupOut]:
+    tree = await get_filter_tree(session)
+    return [
+        FilterGroupOut(
+            key=key,
+            label=_FILTER_KEY_LABELS.get(key, key.replace("_", " ").title()),
+            options=[{"id": o.id, "label": o.label} for o in opts],
+        )
+        for key, opts in tree.items()
+    ]
 
 
 @router.get("/product/{product_id}", response_model=ProductOut)
