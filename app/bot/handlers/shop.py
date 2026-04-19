@@ -233,6 +233,7 @@ async def on_successful_payment(message: Message) -> None:
             user_id=user.id,
             product_id=product.id,
             price=0,  # kept for legacy ruble column; real price is in Stars below
+            price_stars=sp.total_amount,
             status=OrderStatus.PAID,
         )
         s.add(order)

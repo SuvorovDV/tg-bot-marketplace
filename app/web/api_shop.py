@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db import SessionLocal
 from app.models import (
+    Order,
     Product,
     ProductStatus,
     User,
@@ -142,6 +143,16 @@ class InvoiceOut(BaseModel):
     invoice_url: str
 
 
+class OrderOut(BaseModel):
+    id: int
+    product_id: int
+    product_title: str
+    photo_url: str | None = None
+    price_stars: int
+    status: str
+    created_at: str
+
+
 def _product_to_out(p: Product) -> ProductOut:
     return ProductOut(
         id=p.id,
@@ -218,6 +229,40 @@ async def me(
 ) -> MeOut:
     user = await _current_user(session, x_init_data)
     return MeOut(tg_id=user.tg_id, full_name=user.full_name, balance=float(user.balance))
+
+
+@router.get("/me/orders", response_model=list[OrderOut])
+async def my_orders(
+    session: AsyncSession = Depends(_get_session_dep),
+    x_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+) -> list[OrderOut]:
+    from sqlalchemy.orm import selectinload
+
+    user = await _current_user(session, x_init_data)
+    rows = (
+        await session.scalars(
+            select(Order)
+            .where(Order.user_id == user.id)
+            .options(selectinload(Order.product))
+            .order_by(Order.created_at.desc())
+            .limit(100)
+        )
+    ).all()
+    out: list[OrderOut] = []
+    for o in rows:
+        photo = o.product.photo_file_id if o.product else None
+        out.append(
+            OrderOut(
+                id=o.id,
+                product_id=o.product_id,
+                product_title=o.product.title if o.product else f"Product #{o.product_id}",
+                photo_url=photo if (photo or "").startswith("http") else None,
+                price_stars=o.price_stars or 0,
+                status=o.status.value if o.status else "paid",
+                created_at=o.created_at.isoformat() if o.created_at else "",
+            )
+        )
+    return out
 
 
 @router.post("/create_invoice", response_model=InvoiceOut)

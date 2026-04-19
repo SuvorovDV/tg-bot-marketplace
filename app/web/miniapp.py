@@ -169,13 +169,69 @@ MINIAPP_HTML = r"""<!doctype html>
   .spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid #ccc;
     border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* profile / cabinet */
+  .icon-btn {
+    background: var(--card); border: none; border-radius: 50%;
+    width: 34px; height: 34px; font-size: 17px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--fg);
+  }
+  .hdr-right { display: flex; align-items: center; gap: 10px; }
+
+  .profile-card {
+    background: var(--card); border-radius: 14px; padding: 16px;
+    margin: 12px; display: flex; flex-direction: column; gap: 4px;
+  }
+  .profile-card .label { font-size: 12px; color: var(--muted); }
+  .profile-card .name { font-size: 17px; font-weight: 600; }
+  .profile-card .bal { font-size: 28px; font-weight: 700; margin-top: 6px; }
+
+  .section-title {
+    padding: 12px 16px 8px; font-size: 13px; font-weight: 600;
+    color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px;
+  }
+
+  .orders { padding: 0 12px; display: flex; flex-direction: column; gap: 8px; }
+  .order {
+    background: var(--card); border-radius: 12px; padding: 10px;
+    display: flex; gap: 10px; align-items: center;
+  }
+  .order .ph {
+    width: 48px; height: 48px; border-radius: 8px;
+    background: #d9dde3 center/cover no-repeat; flex-shrink: 0;
+  }
+  .order .info { flex: 1; min-width: 0; }
+  .order .title {
+    font-size: 13px; font-weight: 500; margin: 0 0 2px;
+    display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .order .meta { font-size: 11px; color: var(--muted); }
+  .order .right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+  .order .price { font-size: 14px; font-weight: 600; }
+
+  .badge {
+    display: inline-block; font-size: 10px; font-weight: 600;
+    padding: 2px 8px; border-radius: 10px; text-transform: uppercase;
+    letter-spacing: 0.3px; white-space: nowrap;
+  }
+  .badge.st-paid       { background: #d7e8fb; color: #1a5ea5; }
+  .badge.st-processing { background: #fdecc8; color: #8a5a00; }
+  .badge.st-shipped    { background: #e4d8f7; color: #5b3aa8; }
+  .badge.st-delivered  { background: #cdeccf; color: #167a3d; }
+  .badge.st-cancelled  { background: #e5e7eb; color: #555; }
+  .badge.st-refunded   { background: #fadbd2; color: #a84628; }
+  .badge.st-pending    { background: #e5e7eb; color: #555; }
 </style>
 </head>
 <body>
 
 <header>
   <h1>🛍 Маркет</h1>
-  <div class="balance">Баланс: <b id="balance">…</b> ₽</div>
+  <div class="hdr-right">
+    <div class="balance">Баланс: <b id="balance">…</b> ₽</div>
+    <button class="icon-btn" id="profileBtn" title="Профиль">👤</button>
+  </div>
 </header>
 
 <div class="toolbar">
@@ -202,6 +258,21 @@ MINIAPP_HTML = r"""<!doctype html>
   <div class="buy-bar">
     <button class="primary" id="buyBtn">Купить</button>
   </div>
+</section>
+
+<section id="profile" class="detail">
+  <button class="back-btn" id="profileBackBtn">←</button>
+  <div style="height: 56px"></div>
+  <div class="profile-card">
+    <div class="label">Профиль</div>
+    <div class="name" id="profileName">—</div>
+    <div class="label" style="margin-top:10px">Баланс</div>
+    <div class="bal"><span id="profileBalance">0</span> ₽</div>
+  </div>
+
+  <div class="section-title">История покупок</div>
+  <div id="orders" class="orders"></div>
+  <div id="ordersEmpty" class="empty" style="display:none">Заказов пока нет</div>
 </section>
 
 <div id="filterSheet" class="sheet">
@@ -455,6 +526,72 @@ $("applyFilters").addEventListener("click", () => {
 $("clearFilters").addEventListener("click", () => {
   selectedOptions.clear();
   renderFilterGroups();
+});
+
+// ---- profile / orders ----
+const STATUS_LABEL = {
+  paid: "Оплачен",
+  processing: "В обработке",
+  shipped: "Отправлен",
+  delivered: "Доставлен",
+  cancelled: "Отменён",
+  refunded: "Возвращён",
+  pending: "Ожидает оплаты",
+};
+
+async function openProfile() {
+  // Fill header + fetch orders
+  try {
+    const me = await api("/api/shop/me");
+    $("profileName").textContent = me.full_name || ("Пользователь " + me.tg_id);
+    $("profileBalance").textContent = fmt(me.balance);
+  } catch (e) {
+    $("profileName").textContent = "—";
+  }
+  $("orders").innerHTML = '<div class="empty"><span class="spinner"></span></div>';
+  $("ordersEmpty").style.display = "none";
+  let orders = [];
+  try { orders = await api("/api/shop/me/orders"); } catch (e) { orders = []; }
+  if (!orders.length) {
+    $("orders").innerHTML = "";
+    $("ordersEmpty").style.display = "block";
+  } else {
+    $("ordersEmpty").style.display = "none";
+    $("orders").innerHTML = orders.map(o => {
+      const d = o.created_at ? new Date(o.created_at) : null;
+      const dateStr = d ? d.toLocaleDateString("ru-RU", {day:"numeric", month:"short", year:"numeric"}) : "";
+      const status = o.status || "paid";
+      return `
+        <div class="order">
+          <div class="ph" style="${o.photo_url ? `background-image:url('${o.photo_url}')` : ''}"></div>
+          <div class="info">
+            <p class="title">${escapeHtml(o.product_title)}</p>
+            <div class="meta">#${o.id} · ${dateStr}</div>
+          </div>
+          <div class="right">
+            <div class="price">⭐ ${o.price_stars}</div>
+            <span class="badge st-${status}">${escapeHtml(STATUS_LABEL[status] || status)}</span>
+          </div>
+        </div>`;
+    }).join("");
+  }
+  $("profile").classList.add("open");
+  tg?.BackButton?.show();
+}
+
+function closeProfile() {
+  $("profile").classList.remove("open");
+  tg?.BackButton?.hide();
+}
+
+$("profileBtn").addEventListener("click", openProfile);
+$("profileBackBtn").addEventListener("click", closeProfile);
+
+// Re-bind BackButton handler: both detail AND profile use it. Simple approach —
+// close whichever is open.
+tg?.BackButton?.onClick(() => {
+  if ($("profile").classList.contains("open")) closeProfile();
+  else if ($("detail").classList.contains("open")) closeDetail();
 });
 
 loadBalance();

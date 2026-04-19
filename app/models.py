@@ -32,7 +32,11 @@ class ProductStatus(str, enum.Enum):
 class OrderStatus(str, enum.Enum):
     PENDING = "pending"
     PAID = "paid"
+    PROCESSING = "processing"
+    SHIPPED = "shipped"
+    DELIVERED = "delivered"
     CANCELLED = "cancelled"
+    REFUNDED = "refunded"
 
 
 class UserRole(str, enum.Enum):
@@ -171,11 +175,15 @@ class Order(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"))
     price: Mapped[float] = mapped_column(Numeric(12, 2))
+    price_stars: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     status: Mapped[OrderStatus] = mapped_column(Enum(OrderStatus), default=OrderStatus.PAID)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     user: Mapped[User] = relationship()
     product: Mapped[Product] = relationship()
+
+    def __str__(self) -> str:
+        return f"Order #{self.id} ({self.status.value if self.status else '?'})"
 
 
 class AnalyticsEvent(Base):

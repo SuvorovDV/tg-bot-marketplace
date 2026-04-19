@@ -12,6 +12,7 @@ from app.models import (
     BalanceTransaction,
     Category,
     FilterOption,
+    Order,
     Product,
     ProductAttribute,
     Section,
@@ -105,6 +106,22 @@ class SectionEditor(_DynamicBase, model=Section):
     column_list = [Section.id, Section.code, Section.title, Section.is_enabled, Section.sort_order]
 
 
+class OrderEditor(_DynamicBase, model=Order):
+    name = "Order"
+    name_plural = "Orders"
+    column_list = [
+        Order.id,
+        Order.user,
+        Order.product,
+        Order.price_stars,
+        Order.status,
+        Order.created_at,
+    ]
+    column_sortable_list = [Order.id, Order.status, Order.created_at]
+    column_default_sort = [(Order.created_at, True)]
+    form_columns = [Order.user, Order.product, Order.price_stars, Order.status]
+
+
 EDITOR_VIEWS = [
     UserEditor,
     CategoryEditor,
@@ -113,4 +130,5 @@ EDITOR_VIEWS = [
     ProductAttributeEditor,
     BalanceTransactionEditor,
     SectionEditor,
+    OrderEditor,
 ]
