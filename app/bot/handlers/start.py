@@ -1,17 +1,23 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 from aiogram import F, Router
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import Command, CommandStart, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
+from sqlalchemy import select
 
 from app.bot.deps import can_view_admin_ui, get_or_create_user
 from app.bot.keyboards import main_menu
 from app.db import get_session
+from app.models import BalanceTransaction, User
 from app.services.analytics import track
 from app.services.sections import ensure_default_sections, get_enabled_sections
 
 router = Router()
+
+REFERRAL_BONUS = Decimal("5000")
 
 
 WELCOME = (
@@ -21,19 +27,58 @@ WELCOME = (
 )
 
 
+def _parse_ref_arg(arg: str | None) -> int | None:
+    """Extract tg_id from a `/start ref_<tg_id>` payload."""
+    if not arg or not arg.startswith("ref_"):
+        return None
+    try:
+        return int(arg[4:])
+    except ValueError:
+        return None
+
+
 @router.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext) -> None:
+async def cmd_start(message: Message, state: FSMContext, command: CommandObject) -> None:
     await state.clear()
+    ref_tg_id = _parse_ref_arg(command.args)
+    is_new_user = False
+    referrer = None
+
     async with get_session() as s:
-        await get_or_create_user(s, message.from_user)
+        existing = await s.scalar(select(User).where(User.tg_id == message.from_user.id))
+        is_new_user = existing is None
+        user = await get_or_create_user(s, message.from_user)
         await ensure_default_sections(s)
         sections = await get_enabled_sections(s)
         await track(s, message.from_user.id, "start")
+
+        # Record + reward referrer only on new user + self-ref-prevention
+        if is_new_user and ref_tg_id and ref_tg_id != message.from_user.id and user.referrer_id is None:
+            referrer = await s.scalar(select(User).where(User.tg_id == ref_tg_id))
+            if referrer:
+                user.referrer_id = referrer.id
+                referrer.balance = Decimal(referrer.balance) + REFERRAL_BONUS
+                s.add(BalanceTransaction(
+                    user_id=referrer.id, amount=REFERRAL_BONUS,
+                    reason=f"referral bonus: invited tg:{message.from_user.id}",
+                ))
+                await s.commit()
+
     await message.answer(
         WELCOME,
         reply_markup=main_menu(sections, can_view_admin_ui(message.from_user.id)),
         parse_mode="HTML",
     )
+
+    if referrer:
+        try:
+            await message.bot.send_message(
+                referrer.tg_id,
+                f"🎁 По вашей ссылке зарегистрировался новый пользователь!\n"
+                f"+{REFERRAL_BONUS:.0f} ₽ зачислено на баланс.",
+            )
+        except Exception:
+            pass
 
 
 @router.message(Command("cancel"))

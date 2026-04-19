@@ -9,9 +9,19 @@ from sqladmin import Admin
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import json
+from datetime import datetime, timedelta
+
+from sqlalchemy import func
+
+
+def _fmt_ru_money(n: float) -> str:
+    """1234567.89 -> '1 234 567' (Russian thousands separator, no decimals)."""
+    return f"{int(round(n)):,}".replace(",", " ")
+
 from app.config import settings
 from app.db import SessionLocal, engine, init_db
-from app.models import Product, User
+from app.models import Order, OrderStatus, Product, User
 from app.web.admin_views import EDITOR_VIEWS
 from app.web.api_shop import router as shop_api_router
 from app.web.auth import AdminAuth
@@ -65,35 +75,90 @@ async def get_session_dep() -> AsyncSession:
 @app.get("/", response_class=HTMLResponse)
 async def root(session: AsyncSession = Depends(get_session_dep)):
     products = (await session.scalars(select(Product))).all()
-    users = (await session.scalars(select(User))).all()
+    users_count = await session.scalar(select(func.count()).select_from(User)) or 0
     approved = sum(1 for p in products if p.status.value == "approved")
-    pending = sum(1 for p in products if p.status.value == "pending")
+
+    # Sales analytics: paid orders over the last 30 days
+    since = datetime.utcnow() - timedelta(days=30)
+    paid_orders = (await session.scalars(
+        select(Order).where(Order.status == OrderStatus.PAID, Order.created_at >= since)
+    )).all()
+    total_revenue = sum((float(o.price or 0) for o in paid_orders), 0.0)
+    orders_count = len(paid_orders)
+    avg_order_value = (total_revenue / orders_count) if orders_count else 0.0
+
+    # Last 14 days: date -> revenue
+    buckets: dict[str, float] = {}
+    for o in paid_orders:
+        if o.created_at and o.created_at >= datetime.utcnow() - timedelta(days=14):
+            day = o.created_at.strftime("%d.%m")
+            buckets[day] = buckets.get(day, 0.0) + float(o.price or 0)
+    # Build ordered label/data for last 14 days (even if zero)
+    labels, data = [], []
+    for i in range(13, -1, -1):
+        d = datetime.utcnow() - timedelta(days=i)
+        key = d.strftime("%d.%m")
+        labels.append(key)
+        data.append(buckets.get(key, 0.0))
+
+    # Top-5 products by paid-order count in last 30d
+    top_rows = (await session.execute(
+        select(Order.product_id, func.count(Order.id), func.sum(Order.price))
+        .where(Order.status == OrderStatus.PAID, Order.created_at >= since)
+        .group_by(Order.product_id)
+        .order_by(func.count(Order.id).desc())
+        .limit(5)
+    )).all()
+    top_ids = [r[0] for r in top_rows]
+    top_titles = {}
+    if top_ids:
+        ps = (await session.scalars(select(Product).where(Product.id.in_(top_ids)))).all()
+        top_titles = {p.id: p.title for p in ps}
+    top_html = "".join(
+        f"<tr><td>#{pid}</td><td>{top_titles.get(pid, '?')}</td>"
+        f"<td>{cnt} шт.</td><td>{_fmt_ru_money(float(rev or 0))} ₽</td></tr>"
+        for pid, cnt, rev in top_rows
+    ) or '<tr><td colspan=4 style="text-align:center;color:var(--muted)">Пока нет оплаченных заказов</td></tr>'
+
     return f"""<!doctype html>
 <html lang="ru"><head>
 <meta charset="utf-8"><title>Marketplace Bot</title>
 <style>{BASE_CSS}</style>
 {analytics_snippets()}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head><body>
 <div class="container">
   <span class="badge">MVP</span>
   <h1>💄 Marketplace Bot</h1>
-  <p class="lead">Панель управления косметическим маркетплейсом. Просмотр открыт всем, редактирование — по паролю.</p>
+  <p class="lead">Панель управления маркетплейсом. Просмотр открыт всем, редактирование — по логину/паролю.</p>
+
+  <div class="grid" style="margin-bottom:28px">
+    <div class="card"><p>Выручка, 30 дн.</p><div class="stat" style="color:#167a3d">{_fmt_ru_money(total_revenue)} ₽</div></div>
+    <div class="card"><p>Заказов, 30 дн.</p><div class="stat">{orders_count}</div></div>
+    <div class="card"><p>Средний чек</p><div class="stat">{_fmt_ru_money(avg_order_value)} ₽</div></div>
+    <div class="card"><p>Пользователей</p><div class="stat">{users_count}</div></div>
+  </div>
+
+  <div class="card" style="margin-bottom:28px">
+    <h3 style="margin:0 0 10px">📈 Продажи за 14 дней</h3>
+    <div style="height:240px"><canvas id="salesChart"></canvas></div>
+  </div>
 
   <div class="grid" style="margin-bottom:28px">
     <div class="card"><p>Товаров всего</p><div class="stat">{len(products)}</div></div>
     <div class="card"><p>Одобрено</p><div class="stat" style="color:#167a3d">{approved}</div></div>
-    <div class="card"><p>На модерации</p><div class="stat" style="color:#8a5a00">{pending}</div></div>
-    <div class="card"><p>Пользователей</p><div class="stat">{len(users)}</div></div>
   </div>
+
+  <h3 style="font-size:18px;margin:8px 0 12px">🏆 Топ-5 товаров (30 дней)</h3>
+  <table style="margin-bottom:32px">
+    <tr><th>ID</th><th>Название</th><th>Заказов</th><th>Выручка</th></tr>
+    {top_html}
+  </table>
 
   <div class="grid">
     <a class="card" href="/admin">
       <h3>🛠 Админ-панель</h3>
-      <p>Просмотр открыт всем, редактирование — по паролю</p>
-    </a>
-    <a class="card" href="/advertiser/6281298268">
-      <h3>👤 Кабинет рекламодателя</h3>
-      <p>Пример (в проде — авторизация через Telegram Login Widget)</p>
+      <p>Логин <code>admin</code> / пароль <code>admin</code></p>
     </a>
     <a class="card" href="https://t.me/test_marketplace_kwork_bot" target="_blank">
       <h3>🤖 Открыть бот в Telegram</h3>
@@ -101,6 +166,28 @@ async def root(session: AsyncSession = Depends(get_session_dep)):
     </a>
   </div>
 </div>
+<script>
+const ctx = document.getElementById('salesChart');
+new Chart(ctx, {{
+  type: 'line',
+  data: {{
+    labels: {json.dumps(labels)},
+    datasets: [{{
+      label: 'Выручка, ₽',
+      data: {json.dumps(data)},
+      borderColor: '#2481cc', backgroundColor: 'rgba(36,129,204,0.15)',
+      fill: true, tension: 0.3, pointRadius: 3,
+    }}],
+  }},
+  options: {{
+    responsive: true, maintainAspectRatio: false,
+    plugins: {{ legend: {{ display: false }} }},
+    scales: {{
+      y: {{ beginAtZero: true, ticks: {{ callback: v => v.toLocaleString('ru-RU') + ' ₽' }} }},
+    }},
+  }},
+}});
+</script>
 </body></html>"""
 
 

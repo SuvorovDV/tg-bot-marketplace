@@ -19,6 +19,7 @@ from app.models import (
     Product,
     ProductAttribute,
     PromoCode,
+    Review,
     Section,
     User,
 )
@@ -186,6 +187,21 @@ class PromoCodeEditor(_DynamicBase, model=PromoCode):
     ]
 
 
+class ReviewEditor(_DynamicBase, model=Review):
+    name = "Review"
+    name_plural = "Reviews"
+    column_list = [
+        Review.id,
+        Review.user,
+        Review.product,
+        Review.rating,
+        Review.text,
+        Review.created_at,
+    ]
+    column_sortable_list = [Review.rating, Review.created_at]
+    column_default_sort = [(Review.created_at, True)]
+
+
 EDITOR_VIEWS = [
     UserEditor,
     CategoryEditor,
@@ -196,4 +212,5 @@ EDITOR_VIEWS = [
     SectionEditor,
     OrderEditor,
     PromoCodeEditor,
+    ReviewEditor,
 ]

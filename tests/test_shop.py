@@ -14,6 +14,7 @@ from app.models import (
     Product,
     ProductStatus,
     PromoCode,
+    Review,
     User,
     UserRole,
 )
@@ -265,6 +266,56 @@ async def test_checkout_rejects_expired_promo(session, monkeypatch):
     res = client.post("/api/shop/checkout", json={"promo_code": "OLD"})
     assert res.status_code == 400
     assert "истёк" in res.json()["detail"].lower() or "expired" in res.json()["detail"].lower()
+
+
+async def test_review_rejects_non_delivered(session, monkeypatch):
+    user = User(tg_id=40, role=UserRole.USER, balance=Decimal("0"))
+    session.add(user)
+    await session.flush()
+    p = Product(owner_id=user.id, title="P", price=Decimal("100"),
+                stock=1, status=ProductStatus.APPROVED)
+    session.add(p)
+    await session.flush()
+    order = Order(user_id=user.id, product_id=p.id, price=Decimal("100"), status=OrderStatus.PAID)
+    session.add(order)
+    await session.commit()
+
+    app = FastAPI()
+    _mount(app, session, monkeypatch, user)
+    client = TestClient(app)
+    res = client.post("/api/shop/reviews", json={"order_id": order.id, "rating": 5})
+    assert res.status_code == 409
+
+
+async def test_review_created_for_delivered_order(session, monkeypatch):
+    user = User(tg_id=41, role=UserRole.USER, balance=Decimal("0"))
+    session.add(user)
+    await session.flush()
+    p = Product(owner_id=user.id, title="P", price=Decimal("100"),
+                stock=1, status=ProductStatus.APPROVED)
+    session.add(p)
+    await session.flush()
+    order = Order(user_id=user.id, product_id=p.id, price=Decimal("100"), status=OrderStatus.DELIVERED)
+    session.add(order)
+    await session.commit()
+
+    app = FastAPI()
+    _mount(app, session, monkeypatch, user)
+    client = TestClient(app)
+    res = client.post("/api/shop/reviews", json={
+        "order_id": order.id, "rating": 5, "text": "Огонь"
+    })
+    assert res.status_code == 200
+    rev = await session.scalar(select(Review))
+    assert rev is not None and rev.rating == 5
+
+    # Second submit on same order -> 409
+    res2 = client.post("/api/shop/reviews", json={"order_id": order.id, "rating": 4})
+    assert res2.status_code == 409
+
+    # Public reviews endpoint
+    pr = client.get(f"/api/shop/product/{p.id}/reviews").json()
+    assert pr["count"] == 1 and pr["avg_rating"] == 5.0
 
 
 async def test_checkout_rejects_insufficient_balance(session, monkeypatch):

@@ -26,6 +26,7 @@ from app.models import (
     Product,
     ProductStatus,
     PromoCode,
+    Review,
     User,
 )
 from app.services.filters import get_filter_tree, search_products
@@ -138,6 +139,8 @@ class MeOut(BaseModel):
     tg_id: int
     full_name: str | None
     balance: float
+    ref_link: str | None = None
+    referred_count: int = 0
 
 
 class BuyIn(BaseModel):
@@ -152,6 +155,27 @@ class OrderOut(BaseModel):
     price: float
     status: str
     created_at: str
+    can_review: bool = False  # true if delivered AND not yet reviewed
+
+
+class ReviewIn(BaseModel):
+    order_id: int
+    rating: int
+    text: str | None = None
+
+
+class ReviewOut(BaseModel):
+    id: int
+    user_name: str | None = None
+    rating: int
+    text: str | None = None
+    created_at: str
+
+
+class ProductReviewsOut(BaseModel):
+    avg_rating: float
+    count: int
+    reviews: list[ReviewOut]
 
 
 class CartItemOut(BaseModel):
@@ -272,13 +296,35 @@ async def get_product(
     return _product_to_out(p)
 
 
+async def _bot_username() -> str | None:
+    try:
+        me = await _get_bot().get_me()
+        return me.username
+    except Exception:
+        return None
+
+
 @router.get("/me", response_model=MeOut)
 async def me(
     session: AsyncSession = Depends(_get_session_dep),
     x_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
 ) -> MeOut:
     user = await _current_user(session, x_init_data)
-    return MeOut(tg_id=user.tg_id, full_name=user.full_name, balance=float(user.balance))
+    from sqlalchemy import func as sa_func
+    referred = await session.scalar(
+        select(sa_func.count()).select_from(User).where(User.referrer_id == user.id)
+    ) or 0
+    ref_link = None
+    bu = await _bot_username()
+    if bu:
+        ref_link = f"https://t.me/{bu}?start=ref_{user.tg_id}"
+    return MeOut(
+        tg_id=user.tg_id,
+        full_name=user.full_name,
+        balance=float(user.balance),
+        ref_link=ref_link,
+        referred_count=int(referred),
+    )
 
 
 @router.get("/me/favorite_ids", response_model=list[int])
@@ -385,9 +431,15 @@ async def my_orders(
             .limit(100)
         )
     ).all()
+    # Which of these orders the user has already reviewed
+    reviewed_ids = set((await session.scalars(
+        select(Review.order_id).where(Review.user_id == user.id)
+    )).all())
+
     out: list[OrderOut] = []
     for o in rows:
         photo = o.product.photo_file_id if o.product else None
+        status = o.status.value if o.status else "paid"
         out.append(
             OrderOut(
                 id=o.id,
@@ -395,11 +447,83 @@ async def my_orders(
                 product_title=o.product.title if o.product else f"Product #{o.product_id}",
                 photo_url=photo if (photo or "").startswith("http") else None,
                 price=float(o.price or 0),
-                status=o.status.value if o.status else "paid",
+                status=status,
                 created_at=o.created_at.isoformat() if o.created_at else "",
+                can_review=(status == "delivered" and o.id not in reviewed_ids),
             )
         )
     return out
+
+
+# ---- reviews -------------------------------------------------------------
+
+@router.post("/reviews", response_model=dict)
+async def create_review(
+    body: ReviewIn,
+    session: AsyncSession = Depends(_get_session_dep),
+    x_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+) -> dict:
+    user = await _current_user(session, x_init_data)
+    if not (1 <= body.rating <= 5):
+        raise HTTPException(status_code=400, detail="rating must be 1..5")
+    order = await session.get(Order, body.order_id)
+    if not order or order.user_id != user.id:
+        raise HTTPException(status_code=404, detail="order not found")
+    if order.status != OrderStatus.DELIVERED:
+        raise HTTPException(status_code=409, detail="only delivered orders can be reviewed")
+    existing = await session.scalar(
+        select(Review).where(Review.user_id == user.id, Review.order_id == body.order_id)
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="already reviewed")
+    session.add(Review(
+        user_id=user.id,
+        product_id=order.product_id,
+        order_id=body.order_id,
+        rating=body.rating,
+        text=(body.text or "").strip() or None,
+    ))
+    await session.commit()
+    return {"ok": True}
+
+
+@router.get("/product/{product_id}/reviews", response_model=ProductReviewsOut)
+async def product_reviews(
+    product_id: int,
+    session: AsyncSession = Depends(_get_session_dep),
+) -> ProductReviewsOut:
+    from sqlalchemy import func as sa_func
+    from sqlalchemy.orm import selectinload
+
+    rows = (
+        await session.scalars(
+            select(Review)
+            .where(Review.product_id == product_id)
+            .options(selectinload(Review.user))
+            .order_by(Review.created_at.desc())
+            .limit(50)
+        )
+    ).all()
+    avg = await session.scalar(
+        select(sa_func.avg(Review.rating)).where(Review.product_id == product_id)
+    )
+    count = await session.scalar(
+        select(sa_func.count()).select_from(Review).where(Review.product_id == product_id)
+    )
+    return ProductReviewsOut(
+        avg_rating=float(avg or 0),
+        count=int(count or 0),
+        reviews=[
+            ReviewOut(
+                id=r.id,
+                user_name=(r.user.full_name or r.user.username) if r.user else None,
+                rating=r.rating,
+                text=r.text,
+                created_at=r.created_at.isoformat() if r.created_at else "",
+            )
+            for r in rows
+        ],
+    )
 
 
 async def _notify_admins_new_order(user: User, product: Product, order_id: int, price: Decimal) -> None:

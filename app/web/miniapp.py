@@ -312,6 +312,63 @@ MINIAPP_HTML = r"""<!doctype html>
   }
   .discount-line { color: var(--ok); }
 
+  /* referral card */
+  .ref-card {
+    background: linear-gradient(135deg, rgba(36,129,204,0.12), rgba(36,129,204,0.04));
+    border: 1px dashed var(--accent); border-radius: 12px;
+    padding: 12px; margin: 0 12px 12px;
+    font-size: 13px;
+  }
+  .ref-card .ref-link {
+    display: flex; gap: 6px; align-items: center; margin-top: 6px;
+    background: var(--bg); padding: 6px 10px; border-radius: 8px;
+  }
+  .ref-card input {
+    flex: 1; border: none; background: transparent; color: var(--fg);
+    font-size: 12px; outline: none; font-family: ui-monospace, monospace;
+  }
+  .ref-card button {
+    padding: 4px 10px; border: none; border-radius: 6px;
+    background: var(--accent); color: var(--accent-fg);
+    font-size: 12px; cursor: pointer;
+  }
+
+  /* review sheet */
+  .review-stars { display: flex; gap: 6px; justify-content: center; margin: 10px 0 14px; }
+  .review-star {
+    font-size: 32px; cursor: pointer; color: #d9dde3;
+    user-select: none; line-height: 1;
+  }
+  .review-star.on { color: #f5a623; }
+  .review-textarea {
+    width: 100%; padding: 10px 12px; border: 1px solid rgba(0,0,0,0.1);
+    border-radius: 8px; background: var(--bg); color: var(--fg);
+    font-size: 13px; min-height: 72px; resize: vertical; outline: none;
+    box-sizing: border-box; font-family: inherit; margin-bottom: 12px;
+  }
+
+  /* product detail rating / reviews */
+  .rating-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: #fff7db; color: #8a5a00; font-size: 13px; font-weight: 600;
+    padding: 4px 10px; border-radius: 10px; margin-bottom: 14px;
+  }
+  .review-item {
+    padding: 10px 0; border-top: 1px solid rgba(0,0,0,0.05);
+  }
+  .review-item:first-child { border-top: none; }
+  .review-item .row1 {
+    display: flex; justify-content: space-between; font-size: 12px; color: var(--muted);
+    margin-bottom: 2px;
+  }
+  .review-item .stars { color: #f5a623; font-size: 13px; }
+  .review-item .text { font-size: 13px; white-space: pre-wrap; }
+  .review-btn {
+    padding: 6px 12px; border: 1px solid var(--accent); color: var(--accent);
+    background: transparent; border-radius: 8px; font-size: 12px; cursor: pointer;
+    white-space: nowrap;
+  }
+
   /* profile tabs */
   .tabs { display: flex; margin: 4px 12px 0; border-bottom: 1px solid rgba(0,0,0,0.08); }
   .tab {
@@ -358,7 +415,9 @@ MINIAPP_HTML = r"""<!doctype html>
     <h2 class="title" id="detailTitle"></h2>
     <div class="price" id="detailPrice"></div>
     <div class="stock" id="detailStock"></div>
+    <div id="detailRating" class="rating-pill" style="display:none"></div>
     <div class="desc" id="detailDesc"></div>
+    <div id="detailReviews" style="margin-top:20px"></div>
   </div>
   <div class="buy-bar">
     <button class="primary" id="buyBtn">Купить</button>
@@ -398,6 +457,17 @@ MINIAPP_HTML = r"""<!doctype html>
     <div class="label" style="margin-top:10px">Баланс</div>
     <div class="bal"><span id="profileBalance">0</span> ₽</div>
   </div>
+  <div id="refCard" class="ref-card" style="display:none">
+    🎁 <b>Реферальная программа</b><br>
+    Пригласи друга — получи <b>5 000 ₽</b> на баланс за его регистрацию.
+    <div style="margin-top:4px; font-size:12px; color:var(--muted)">
+      Приглашено: <b id="referredCount">0</b>
+    </div>
+    <div class="ref-link">
+      <input id="refLink" readonly>
+      <button id="refCopyBtn">Копировать</button>
+    </div>
+  </div>
 
   <div class="tabs" id="profileTabs">
     <div class="tab active" data-tab="history">История</div>
@@ -413,6 +483,25 @@ MINIAPP_HTML = r"""<!doctype html>
     <div id="favoritesEmpty" class="empty" style="display:none">В избранном пусто</div>
   </div>
 </section>
+
+<div id="reviewSheet" class="sheet">
+  <div class="body">
+    <h3>Оставить отзыв</h3>
+    <div id="reviewOrderMeta" style="font-size:13px; color:var(--muted); margin-bottom:8px"></div>
+    <div class="review-stars" id="reviewStars">
+      <span class="review-star" data-r="1">★</span>
+      <span class="review-star" data-r="2">★</span>
+      <span class="review-star" data-r="3">★</span>
+      <span class="review-star" data-r="4">★</span>
+      <span class="review-star" data-r="5">★</span>
+    </div>
+    <textarea id="reviewText" class="review-textarea" placeholder="Напишите, что понравилось (необязательно)"></textarea>
+    <div class="sheet-actions">
+      <button class="btn-secondary" id="reviewCancelBtn">Отмена</button>
+      <button class="btn-primary" id="reviewSubmitBtn">Отправить</button>
+    </div>
+  </div>
+</div>
 
 <div id="filterSheet" class="sheet">
   <div class="body">
@@ -798,7 +887,7 @@ async function loadProducts() {
 }
 
 // ---- detail + buy ----
-function openDetail(id) {
+async function openDetail(id) {
   const p = products.find(x => x.id === id);
   if (!p) return;
   currentDetail = p;
@@ -808,11 +897,35 @@ function openDetail(id) {
   $("detailStock").textContent = p.stock > 0 ? `В наличии: ${p.stock} шт.` : "Нет в наличии";
   $("detailStock").className = "stock" + (p.stock <= 0 ? " oos" : "");
   $("detailDesc").textContent = p.description || "";
+  $("detailRating").style.display = "none";
+  $("detailReviews").innerHTML = "";
   $("buyBtn").disabled = p.stock <= 0;
   $("buyBtn").textContent = p.stock > 0 ? `В корзину · ${fmt(p.price)} ₽` : "Нет в наличии";
   updateHeartButton($("detailFavBtn"), p.id);
   $("detail").classList.add("open");
   tg?.BackButton?.show();
+
+  // Lazy load reviews (non-blocking)
+  try {
+    const rv = await api(`/api/shop/product/${id}/reviews`);
+    if (rv.count > 0) {
+      const avg = (rv.avg_rating || 0).toFixed(1).replace(".", ",");
+      $("detailRating").style.display = "";
+      $("detailRating").textContent = `★ ${avg} · ${rv.count} отзыв${rv.count === 1 ? "" : rv.count < 5 ? "а" : "ов"}`;
+      $("detailReviews").innerHTML = `
+        <div class="section-title" style="padding-left:0">Отзывы</div>
+        ${rv.reviews.slice(0, 5).map(r => {
+          const d = r.created_at ? new Date(r.created_at).toLocaleDateString("ru-RU", {day:"numeric", month:"short"}) : "";
+          const stars = "★".repeat(r.rating) + "☆".repeat(5 - r.rating);
+          return `<div class="review-item">
+            <div class="row1"><span>${escapeHtml(r.user_name || "Аноним")}</span><span>${d}</span></div>
+            <div class="stars">${stars}</div>
+            ${r.text ? `<div class="text">${escapeHtml(r.text)}</div>` : ""}
+          </div>`;
+        }).join("")}
+      `;
+    }
+  } catch (e) { /* reviews are optional */ }
 }
 
 function closeDetail() {
@@ -907,6 +1020,9 @@ async function loadOrdersTab() {
     const d = o.created_at ? new Date(o.created_at) : null;
     const dateStr = d ? d.toLocaleDateString("ru-RU", {day:"numeric", month:"short", year:"numeric"}) : "";
     const status = o.status || "paid";
+    const reviewBtn = o.can_review
+      ? `<button class="review-btn" data-review-order="${o.id}" data-product-title="${escapeHtml(o.product_title)}">★ Отзыв</button>`
+      : "";
     return `
       <div class="order">
         <div class="ph" style="${o.photo_url ? `background-image:url('${o.photo_url}')` : ''}"></div>
@@ -917,10 +1033,68 @@ async function loadOrdersTab() {
         <div class="right">
           <div class="price">${fmt(o.price)} ₽</div>
           <span class="badge st-${status}">${escapeHtml(STATUS_LABEL[status] || status)}</span>
+          ${reviewBtn}
         </div>
       </div>`;
   }).join("");
+  $("orders").querySelectorAll("[data-review-order]").forEach(btn => {
+    btn.addEventListener("click", () => openReviewSheet(Number(btn.dataset.reviewOrder), btn.dataset.productTitle));
+  });
 }
+
+// ---- review sheet ----
+let reviewOrderId = null;
+let reviewRating = 0;
+
+function setReviewStars(n) {
+  reviewRating = n;
+  $("reviewStars").querySelectorAll(".review-star").forEach(el => {
+    el.classList.toggle("on", Number(el.dataset.r) <= n);
+  });
+}
+
+function openReviewSheet(orderId, productTitle) {
+  reviewOrderId = orderId;
+  setReviewStars(5);
+  $("reviewText").value = "";
+  $("reviewOrderMeta").textContent = `Заказ #${orderId} — ${productTitle}`;
+  $("reviewSheet").classList.add("open");
+}
+function closeReviewSheet() {
+  $("reviewSheet").classList.remove("open");
+  reviewOrderId = null;
+}
+
+$("reviewStars").addEventListener("click", (e) => {
+  const s = e.target.closest(".review-star");
+  if (s) setReviewStars(Number(s.dataset.r));
+});
+$("reviewCancelBtn").addEventListener("click", closeReviewSheet);
+$("reviewSheet").addEventListener("click", (e) => {
+  if (e.target.id === "reviewSheet") closeReviewSheet();
+});
+$("reviewSubmitBtn").addEventListener("click", async () => {
+  if (!reviewOrderId || reviewRating < 1) { toast("Выберите оценку", "err"); return; }
+  const btn = $("reviewSubmitBtn");
+  btn.disabled = true;
+  try {
+    await api("/api/shop/reviews", {
+      method: "POST",
+      body: JSON.stringify({
+        order_id: reviewOrderId,
+        rating: reviewRating,
+        text: $("reviewText").value.trim() || null,
+      }),
+    });
+    tg?.HapticFeedback?.notificationOccurred("success");
+    toast("✓ Спасибо за отзыв!", "ok");
+    closeReviewSheet();
+    await loadOrdersTab();
+  } catch (e) {
+    toast("Ошибка: " + e.message, "err");
+  }
+  btn.disabled = false;
+});
 
 async function loadFavoritesTab() {
   $("favorites").innerHTML = '<div class="empty"><span class="spinner"></span></div>';
@@ -987,6 +1161,13 @@ async function openProfile() {
     const me = await api("/api/shop/me");
     $("profileName").textContent = me.full_name || ("Пользователь " + me.tg_id);
     $("profileBalance").textContent = fmt(me.balance);
+    if (me.ref_link) {
+      $("refCard").style.display = "";
+      $("refLink").value = me.ref_link;
+      $("referredCount").textContent = me.referred_count || 0;
+    } else {
+      $("refCard").style.display = "none";
+    }
   } catch (e) {
     $("profileName").textContent = "—";
   }
@@ -995,6 +1176,19 @@ async function openProfile() {
   $("profile").classList.add("open");
   tg?.BackButton?.show();
 }
+
+$("refCopyBtn").addEventListener("click", async () => {
+  const link = $("refLink").value;
+  try {
+    await navigator.clipboard.writeText(link);
+    toast("✓ Ссылка скопирована", "ok");
+  } catch (e) {
+    $("refLink").select();
+    document.execCommand("copy");
+    toast("Ссылка скопирована", "ok");
+  }
+  tg?.HapticFeedback?.impactOccurred("light");
+});
 
 $("profileTabs").addEventListener("click", (e) => {
   const tab = e.target.closest(".tab");
@@ -1013,7 +1207,9 @@ $("profileBackBtn").addEventListener("click", closeProfile);
 // Re-bind BackButton handler: detail / profile / cart all use overlays.
 // Close whichever is open (top-most first).
 tg?.BackButton?.onClick(() => {
-  if ($("cart").classList.contains("open")) closeCart();
+  if ($("reviewSheet").classList.contains("open")) closeReviewSheet();
+  else if ($("filterSheet").classList.contains("open")) $("filterSheet").classList.remove("open");
+  else if ($("cart").classList.contains("open")) closeCart();
   else if ($("profile").classList.contains("open")) closeProfile();
   else if ($("detail").classList.contains("open")) closeDetail();
 });

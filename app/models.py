@@ -54,6 +54,7 @@ class User(Base):
     full_name: Mapped[str | None] = mapped_column(String(255))
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.USER)
     balance: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
+    referrer_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     products: Mapped[list["Product"]] = relationship(back_populates="owner")
@@ -213,6 +214,22 @@ class Order(Base):
 
     def __str__(self) -> str:
         return f"Order #{self.id} ({self.status.value if self.status else '?'})"
+
+
+class Review(Base):
+    __tablename__ = "reviews"
+    __table_args__ = (UniqueConstraint("user_id", "order_id", name="uq_review_user_order"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"), index=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"))
+    rating: Mapped[int] = mapped_column(Integer)  # 1..5
+    text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    user: Mapped[User] = relationship()
+    product: Mapped[Product] = relationship()
 
 
 class PromoCode(Base):
