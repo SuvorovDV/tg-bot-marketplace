@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     web_admin_password: str = "change-me"  # password for SQLAdmin /admin login
     daily_placement_fee: int = 50
     demo_mode: bool = True  # show admin UI to everyone, block mutating actions
+    miniapp_url: str = ""  # https URL to Mini App (WebApp button target); empty => public_web_url + /app
     yandex_metrika_id: str = ""
     google_analytics_id: str = ""
     ga_api_secret: str = ""

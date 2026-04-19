@@ -29,6 +29,12 @@ class ProductStatus(str, enum.Enum):
     PAUSED = "paused"  # out of balance / manually paused
 
 
+class OrderStatus(str, enum.Enum):
+    PENDING = "pending"
+    PAID = "paid"
+    CANCELLED = "cancelled"
+
+
 class UserRole(str, enum.Enum):
     USER = "user"
     ADVERTISER = "advertiser"
@@ -81,8 +87,10 @@ class Product(Base):
     title: Mapped[str] = mapped_column(String(255))
     description: Mapped[str | None] = mapped_column(Text)
     price: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
+    price_stars: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     video_file_id: Mapped[str | None] = mapped_column(String(255))
     photo_file_id: Mapped[str | None] = mapped_column(String(255))
+    stock: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     status: Mapped[ProductStatus] = mapped_column(Enum(ProductStatus), default=ProductStatus.DRAFT)
     rejection_reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -134,6 +142,20 @@ class Section(Base):
     title: Mapped[str] = mapped_column(String(100))  # editable display text
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class Order(Base):
+    __tablename__ = "orders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"))
+    price: Mapped[float] = mapped_column(Numeric(12, 2))
+    status: Mapped[OrderStatus] = mapped_column(Enum(OrderStatus), default=OrderStatus.PAID)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    user: Mapped[User] = relationship()
+    product: Mapped[Product] = relationship()
 
 
 class AnalyticsEvent(Base):

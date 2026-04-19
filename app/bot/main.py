@@ -38,6 +38,7 @@ async def run_bot() -> None:
         [
             BotCommand(command="start", description="Главное меню"),
             BotCommand(command="help", description="Справка и команды"),
+            BotCommand(command="shop", description="Открыть магазин"),
             BotCommand(command="balance", description="Мой баланс"),
             BotCommand(command="my_products", description="Мои товары"),
             BotCommand(command="add_product", description="Добавить товар"),

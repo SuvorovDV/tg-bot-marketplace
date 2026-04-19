@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -64,7 +65,7 @@ _PHOTOS = {
 }
 
 # (title, desc, price, filter_values, has_video, photo_key)
-PRODUCTS = [
+BASE_PRODUCTS = [
     ("Chanel Hydra Beauty Cream", "Увлажняющий крем для сухой кожи, 50 мл", 7500, ["chanel", "dry", "cream", "premium"], True, "cream_1"),
     ("Dior Capture Totale Serum", "Антивозрастная сыворотка, 30 мл", 9900, ["dior", "normal", "serum", "premium"], True, "serum_1"),
     ("L'Oréal Revitalift Cream", "Дневной крем для комбинированной кожи", 890, ["loreal", "combo", "cream", "cheap"], True, "cream_2"),
@@ -78,6 +79,39 @@ PRODUCTS = [
     ("Dior Forever Skin Glow", "Увлажняющая сыворотка с сиянием", 6500, ["dior", "normal", "serum", "premium"], True, "serum_3"),
     ("Chanel Rouge Allure", "Люксовая помада", 4800, ["chanel", "lipstick", "premium"], True, "lip_4"),
 ]
+
+# Shade / variant suffixes used to inflate the catalog to 91 items.
+_SHADES = [
+    "Rose", "Nude", "Classic Red", "Berry", "Coral", "Mocha", "Plum",
+    "Velvet", "Satin", "Pearl", "Ivory", "Sand", "Honey", "Cocoa", "Spice",
+]
+_SIZES = ["15 мл", "30 мл", "50 мл", "75 мл", "100 мл"]
+
+
+def _build_products(target: int = 91) -> list[tuple]:
+    """Expand BASE_PRODUCTS to `target` entries by cycling shades/sizes.
+
+    First 12 entries are the originals; the rest are deterministic variants
+    so seed is idempotent across runs.
+    """
+    out: list[tuple] = list(BASE_PRODUCTS)
+    i = 0
+    rng = random.Random(42)  # stable pricing jitter
+    while len(out) < target:
+        base = BASE_PRODUCTS[i % len(BASE_PRODUCTS)]
+        title, desc, price, values, has_video, photo_key = base
+        is_lip_or_masc = any(v in values for v in ("lipstick", "mascara"))
+        suffix = _SHADES[i % len(_SHADES)] if is_lip_or_masc else _SIZES[i % len(_SIZES)]
+        new_title = f"{title} — {suffix}"
+        # Mild price jitter (-15%..+15%) rounded to 10₽
+        factor = 1 + rng.uniform(-0.15, 0.15)
+        new_price = max(100, int(round(price * factor / 10) * 10))
+        out.append((new_title, desc, new_price, values, has_video, photo_key))
+        i += 1
+    return out
+
+
+PRODUCTS = _build_products(91)
 
 
 async def seed() -> None:
@@ -127,15 +161,20 @@ async def seed() -> None:
             t for (t,) in (await s.execute(select(Product.title))).all()
         }
         created = 0
+        stock_rng = random.Random(1337)  # stable stock across runs
         for title, desc, price, values, has_video, photo_key in PRODUCTS:
             photo_url = _PHOTOS[photo_key]
+            stock = stock_rng.randint(3, 30)
             if title in existing_titles:
-                # Update photo/video URLs on existing seeded rows.
+                # Update photo/video URLs + top up stock + enforce 1-star price.
                 p = await s.scalar(select(Product).where(Product.title == title))
                 if p:
                     p.photo_file_id = photo_url
                     if has_video and not p.video_file_id:
                         p.video_file_id = DEMO_VIDEO_URL
+                    if (p.stock or 0) == 0:
+                        p.stock = stock
+                    p.price_stars = 1
                 continue
             product = Product(
                 owner_id=adv.id,
@@ -143,8 +182,10 @@ async def seed() -> None:
                 title=title,
                 description=desc,
                 price=price,
+                price_stars=1,
                 photo_file_id=photo_url,
                 video_file_id=DEMO_VIDEO_URL if has_video else None,
+                stock=stock,
                 status=ProductStatus.APPROVED,
             )
             s.add(product)

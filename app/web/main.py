@@ -13,7 +13,9 @@ from app.config import settings
 from app.db import SessionLocal, engine, init_db
 from app.models import Product, User
 from app.web.admin_views import EDITOR_VIEWS
+from app.web.api_shop import router as shop_api_router
 from app.web.auth import AdminAuth
+from app.web.miniapp import MINIAPP_HTML
 from app.web.templates import BASE_CSS, analytics_snippets
 
 
@@ -39,6 +41,13 @@ admin = Admin(
 )
 for view in EDITOR_VIEWS:
     admin.add_view(view)
+
+app.include_router(shop_api_router)
+
+
+@app.get("/app", response_class=HTMLResponse, include_in_schema=False)
+async def mini_app() -> HTMLResponse:
+    return HTMLResponse(MINIAPP_HTML)
 
 
 @app.get("/admin-edit", include_in_schema=False)
