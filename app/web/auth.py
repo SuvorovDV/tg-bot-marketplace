@@ -20,8 +20,12 @@ is_editor_mode: ContextVar[bool] = ContextVar("is_editor_mode", default=False)
 class AdminAuth(AuthenticationBackend):
     async def login(self, request: Request) -> bool:
         form = await request.form()
+        username = (form.get("username") or "").strip()
         password = (form.get("password") or "").strip()
-        if password and password == settings.web_admin_password:
+        if (
+            username == settings.web_admin_login
+            and password == settings.web_admin_password
+        ):
             request.session["admin"] = True
             return True
         return False
