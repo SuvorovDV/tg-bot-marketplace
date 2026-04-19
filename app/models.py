@@ -55,6 +55,10 @@ class User(Base):
     products: Mapped[list["Product"]] = relationship(back_populates="owner")
     transactions: Mapped[list["BalanceTransaction"]] = relationship(back_populates="user")
 
+    def __str__(self) -> str:
+        name = self.full_name or self.username
+        return f"{name} (tg:{self.tg_id})" if name else f"User #{self.id} (tg:{self.tg_id})"
+
 
 class Category(Base):
     __tablename__ = "categories"
@@ -63,6 +67,9 @@ class Category(Base):
     name: Mapped[str] = mapped_column(String(100), unique=True)
     slug: Mapped[str] = mapped_column(String(100), unique=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    def __str__(self) -> str:
+        return self.name or f"Category #{self.id}"
 
 
 class FilterOption(Base):
@@ -76,6 +83,9 @@ class FilterOption(Base):
     label: Mapped[str] = mapped_column(String(100))  # human-readable: "Chanel"
     value: Mapped[str] = mapped_column(String(100))  # normalized: "chanel"
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+    def __str__(self) -> str:
+        return f"{self.key}: {self.label}"
 
 
 class Product(Base):
@@ -102,6 +112,9 @@ class Product(Base):
         back_populates="product", cascade="all, delete-orphan"
     )
 
+    def __str__(self) -> str:
+        return f"#{self.id} {self.title}" if self.title else f"Product #{self.id}"
+
 
 class ProductAttribute(Base):
     """Many-to-many-ish: product <-> filter option(s)."""
@@ -117,6 +130,10 @@ class ProductAttribute(Base):
 
     product: Mapped[Product] = relationship(back_populates="attributes")
     option: Mapped[FilterOption] = relationship()
+
+    def __str__(self) -> str:
+        opt = self.option
+        return f"{self.product_id} → {opt.key}:{opt.label}" if opt else f"Attr #{self.id}"
 
 
 class BalanceTransaction(Base):
@@ -142,6 +159,9 @@ class Section(Base):
     title: Mapped[str] = mapped_column(String(100))  # editable display text
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+    def __str__(self) -> str:
+        return f"{self.title} ({self.code})"
 
 
 class Order(Base):
