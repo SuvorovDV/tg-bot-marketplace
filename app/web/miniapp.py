@@ -191,6 +191,19 @@ MINIAPP_HTML = r"""<!doctype html>
   .profile-card .label { font-size: 12px; color: var(--muted); }
   .profile-card .name { font-size: 17px; font-weight: 600; }
   .profile-card .bal { font-size: 28px; font-weight: 700; margin-top: 6px; }
+  .topup-row {
+    display: flex; gap: 6px; margin-top: 10px;
+  }
+  .topup-row button {
+    flex: 1; padding: 9px 4px; border: none; border-radius: 8px;
+    background: var(--accent); color: var(--accent-fg);
+    font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .topup-hint { font-size: 11px; color: var(--muted); margin-top: 6px; }
+  .delivery-title {
+    font-size: 13px; font-weight: 600; color: var(--fg);
+    margin: 2px 0 6px; display: flex; align-items: center; gap: 6px;
+  }
 
   .section-title {
     padding: 12px 16px 8px; font-size: 13px; font-weight: 600;
@@ -442,7 +455,8 @@ MINIAPP_HTML = r"""<!doctype html>
     </div>
     <div id="promoStatus" class="promo-status"></div>
     <div class="promo-hint">Попробуйте <b>WELCOME</b> (−10%) или <b>BIG500</b> (−500 ₽)</div>
-    <textarea id="addressInput" class="address-input" rows="2" placeholder="Адрес доставки (необязательно)"></textarea>
+    <div class="delivery-title">🏠 Адрес доставки</div>
+    <textarea id="addressInput" class="address-input" rows="2" placeholder="Улица, дом, квартира (необязательно)"></textarea>
     <div class="cart-total"><span>Сумма</span><span id="cartSubtotal">0 ₽</span></div>
     <div class="cart-total discount-line" id="cartDiscountRow" style="display:none">
       <span id="cartDiscountLabel">Скидка</span>
@@ -461,6 +475,12 @@ MINIAPP_HTML = r"""<!doctype html>
     <div class="name" id="profileName">—</div>
     <div class="label" style="margin-top:10px">Баланс</div>
     <div class="bal"><span id="profileBalance">0</span> ₽</div>
+    <div class="topup-row">
+      <button data-topup="500">+ 500 ₽</button>
+      <button data-topup="1000">+ 1 000 ₽</button>
+      <button data-topup="5000">+ 5 000 ₽</button>
+    </div>
+    <div class="topup-hint">В демо-режиме — мгновенное пополнение</div>
   </div>
   <div id="refCard" class="ref-card" style="display:none">
     🎁 <b>Реферальная программа</b><br>
@@ -1188,6 +1208,26 @@ async function openProfile() {
   $("profile").classList.add("open");
   tg?.BackButton?.show();
 }
+
+// ---- quick top-up from profile ----
+document.querySelectorAll(".topup-row button").forEach(btn => {
+  btn.addEventListener("click", async () => {
+    const amount = Number(btn.dataset.topup);
+    btn.disabled = true;
+    try {
+      const res = await api("/api/shop/topup", {
+        method: "POST", body: JSON.stringify({ amount }),
+      });
+      $("profileBalance").textContent = fmt(res.balance);
+      $("balance").textContent = fmt(res.balance);
+      tg?.HapticFeedback?.notificationOccurred("success");
+      toast(`✓ +${fmt(amount)} ₽ на баланс`, "ok");
+    } catch (e) {
+      toast("Ошибка: " + e.message, "err");
+    }
+    btn.disabled = false;
+  });
+});
 
 $("refCopyBtn").addEventListener("click", async () => {
   const link = $("refLink").value;

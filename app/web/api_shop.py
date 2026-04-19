@@ -209,6 +209,10 @@ class CheckoutIn(BaseModel):
     delivery_address: str | None = None
 
 
+class TopupIn(BaseModel):
+    amount: float
+
+
 class PromoValidateIn(BaseModel):
     code: str
 
@@ -570,6 +574,28 @@ async def _notify_admins_new_order(user: User, product: Product, order_id: int, 
                 pass
     except Exception:
         pass
+
+
+@router.post("/topup")
+async def api_topup(
+    body: TopupIn,
+    session: AsyncSession = Depends(_get_session_dep),
+    x_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+) -> dict:
+    """Demo top-up: credit the user's virtual balance. Gated to a sane range."""
+    amount = Decimal(str(body.amount))
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="amount must be positive")
+    if amount > Decimal("100000"):
+        raise HTTPException(status_code=400, detail="amount too large")
+    user = await _current_user(session, x_init_data)
+    user.balance = Decimal(user.balance) + amount
+    session.add(BalanceTransaction(
+        user_id=user.id, amount=amount, reason="top-up (mini-app)",
+    ))
+    await session.commit()
+    await session.refresh(user)
+    return {"balance": float(user.balance)}
 
 
 @router.post("/buy")

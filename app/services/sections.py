@@ -7,6 +7,7 @@ from app.models import Section
 
 DEFAULT_SECTIONS: list[tuple[str, str, int]] = [
     ("shop", "🛍 Магазин", 10),
+    ("balance", "💰 Баланс", 20),
     ("admin", "⚙️ Админка", 100),
 ]
 

@@ -75,6 +75,7 @@ async def open_shop(message: Message) -> None:
     )
 
 
+@router.message(F.text == "💰 Баланс")
 @router.message(Command("balance"))
 async def show_balance(message: Message) -> None:
     async with get_session() as s:
