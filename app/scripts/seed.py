@@ -11,14 +11,28 @@ from app.db import get_session, init_db
 from app.models import (
     Category,
     FilterOption,
+    Order,
+    OrderStatus,
     Product,
     ProductAttribute,
     ProductStatus,
     PromoCode,
+    Review,
     User,
     UserRole,
 )
 from app.services.sections import ensure_default_sections
+
+DEMO_REVIEW_TEXTS = [
+    (5, "Взяла на пробу — в восторге! Эффект с первого применения."),
+    (4, "Хороший товар за свои деньги, упаковка аккуратная."),
+    (5, "Заказываю уже второй раз, всё нравится, доставка быстрая."),
+    (5, "Советую, подруге очень подошло!"),
+    (4, "Нормально, но ожидала чуть большего от цены."),
+    (5, "Качество топ! Буду брать ещё."),
+    (5, "Пахнет приятно, кожа стала мягче уже через неделю."),
+    (4, "Достойно, но хотелось бы объём побольше."),
+]
 
 DEMO_PROMOS = [
     ("WELCOME", 10, 0, None),    # 10% скидка, без лимита
@@ -223,9 +237,55 @@ async def seed() -> None:
             promos_created += 1
         await s.commit()
 
+        # Demo reviewer: ensure user, seed delivered orders + reviews so that
+        # the Mini App's product cards show ratings out of the box.
+        reviewer = await s.scalar(select(User).where(User.tg_id == 777_000_002))
+        if not reviewer:
+            reviewer = User(
+                tg_id=777_000_002,
+                username="demo_reviewer",
+                full_name="Анна Демо",
+                balance=Decimal("50000"),
+            )
+            s.add(reviewer)
+            await s.commit()
+            await s.refresh(reviewer)
+
+        reviews_created = 0
+        first_products = (await s.scalars(
+            select(Product).where(Product.status == ProductStatus.APPROVED).order_by(Product.id).limit(8)
+        )).all()
+        for idx, product in enumerate(first_products):
+            rating, text = DEMO_REVIEW_TEXTS[idx % len(DEMO_REVIEW_TEXTS)]
+            # Skip if reviewer already reviewed this product
+            existing_rev = await s.scalar(
+                select(Review).where(
+                    Review.user_id == reviewer.id, Review.product_id == product.id
+                )
+            )
+            if existing_rev:
+                continue
+            order = Order(
+                user_id=reviewer.id,
+                product_id=product.id,
+                price=Decimal(product.price or 0),
+                status=OrderStatus.DELIVERED,
+            )
+            s.add(order)
+            await s.flush()
+            s.add(Review(
+                user_id=reviewer.id,
+                product_id=product.id,
+                order_id=order.id,
+                rating=rating,
+                text=text,
+            ))
+            reviews_created += 1
+        await s.commit()
+
         print(
             f"Seeded: {created} products, {len(value_to_opt)} filter options, "
-            f"{promos_created} promo codes, advertiser id={adv.id}"
+            f"{promos_created} promo codes, {reviews_created} reviews, advertiser id={adv.id}"
         )
 
 

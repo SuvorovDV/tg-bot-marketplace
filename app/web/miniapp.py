@@ -87,6 +87,11 @@ MINIAPP_HTML = r"""<!doctype html>
   .card .price { font-size: 15px; font-weight: 600; }
   .card .stock { font-size: 11px; color: var(--muted); margin-top: 2px; }
   .card .oos { color: var(--err); }
+  .card .rating {
+    display: inline-flex; align-items: center; gap: 3px;
+    font-size: 11px; color: #8a5a00; margin-top: 2px; font-weight: 500;
+  }
+  .card .rating .star { color: #f5a623; }
 
   .detail { position: fixed; inset: 0; background: var(--bg); z-index: 20; overflow-y: auto; display: none; }
   .detail.open { display: block; }
@@ -869,6 +874,7 @@ async function loadProducts() {
       <div class="body">
         <p class="title">${escapeHtml(p.title)}</p>
         <div class="price">${fmt(p.price)} ₽</div>
+        ${p.review_count > 0 ? `<div class="rating"><span class="star">★</span> ${p.avg_rating.toFixed(1).replace('.',',')} · ${p.review_count}</div>` : ''}
         <div class="stock ${p.stock <= 0 ? 'oos' : ''}">${p.stock > 0 ? 'В наличии: ' + p.stock : 'Нет в наличии'}</div>
       </div>
     </div>
@@ -908,8 +914,8 @@ async function openDetail(id) {
   // Lazy load reviews (non-blocking)
   try {
     const rv = await api(`/api/shop/product/${id}/reviews`);
+    const avg = (rv.avg_rating || 0).toFixed(1).replace(".", ",");
     if (rv.count > 0) {
-      const avg = (rv.avg_rating || 0).toFixed(1).replace(".", ",");
       $("detailRating").style.display = "";
       $("detailRating").textContent = `★ ${avg} · ${rv.count} отзыв${rv.count === 1 ? "" : rv.count < 5 ? "а" : "ов"}`;
       $("detailReviews").innerHTML = `
@@ -923,6 +929,12 @@ async function openDetail(id) {
             ${r.text ? `<div class="text">${escapeHtml(r.text)}</div>` : ""}
           </div>`;
         }).join("")}
+      `;
+    } else {
+      $("detailRating").style.display = "none";
+      $("detailReviews").innerHTML = `
+        <div class="section-title" style="padding-left:0">Отзывы</div>
+        <div class="empty" style="padding:16px 0">Пока нет отзывов. Станьте первым после доставки!</div>
       `;
     }
   } catch (e) { /* reviews are optional */ }

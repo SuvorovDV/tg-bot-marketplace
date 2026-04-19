@@ -133,6 +133,8 @@ class ProductOut(BaseModel):
     stock: int
     photo_url: str | None = None
     video_url: str | None = None
+    avg_rating: float = 0.0
+    review_count: int = 0
 
 
 class MeOut(BaseModel):
@@ -227,7 +229,22 @@ class FavoriteOut(BaseModel):
     stock: int
 
 
-def _product_to_out(p: Product) -> ProductOut:
+async def _review_stats(session: AsyncSession, product_ids: list[int]) -> dict[int, tuple[float, int]]:
+    if not product_ids:
+        return {}
+    from sqlalchemy import func as sa_func
+    rows = (
+        await session.execute(
+            select(Review.product_id, sa_func.avg(Review.rating), sa_func.count(Review.id))
+            .where(Review.product_id.in_(product_ids))
+            .group_by(Review.product_id)
+        )
+    ).all()
+    return {pid: (float(avg or 0), int(cnt or 0)) for pid, avg, cnt in rows}
+
+
+def _product_to_out(p: Product, stats: dict[int, tuple[float, int]] | None = None) -> ProductOut:
+    avg, cnt = (stats or {}).get(p.id, (0.0, 0))
     return ProductOut(
         id=p.id,
         title=p.title,
@@ -236,6 +253,8 @@ def _product_to_out(p: Product) -> ProductOut:
         stock=p.stock,
         photo_url=p.photo_file_id if (p.photo_file_id or "").startswith("http") else None,
         video_url=p.video_file_id if (p.video_file_id or "").startswith("http") else None,
+        avg_rating=avg,
+        review_count=cnt,
     )
 
 
@@ -262,7 +281,8 @@ async def list_products(
     option_ids = [int(x) for x in options.split(",") if x.strip().isdigit()] if options else []
     query = q.strip() or None
     rows = await search_products(session, option_ids, query=query, limit=500)
-    return [_product_to_out(p) for p in rows]
+    stats = await _review_stats(session, [p.id for p in rows])
+    return [_product_to_out(p, stats) for p in rows]
 
 
 class FilterGroupOut(BaseModel):
@@ -293,7 +313,8 @@ async def get_product(
     p = await session.get(Product, product_id)
     if not p or p.status != ProductStatus.APPROVED:
         raise HTTPException(status_code=404, detail="not found")
-    return _product_to_out(p)
+    stats = await _review_stats(session, [p.id])
+    return _product_to_out(p, stats)
 
 
 async def _bot_username() -> str | None:
