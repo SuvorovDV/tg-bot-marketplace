@@ -7,12 +7,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     bot_token: str = "test"
-    telegram_api_server: str = ""  # e.g. https://my-worker.workers.dev (proxy when api.telegram.org is blocked)
     admin_ids: str = ""
     database_url: str = "sqlite+aiosqlite:///./marketplace.db"
     web_host: str = "0.0.0.0"
     web_port: int = 8000
-    public_web_url: str = ""  # e.g. https://xxx.trycloudflare.com; empty => localhost URL
+    public_web_url: str = ""  # e.g. https://marketplace.example.com; empty => localhost URL
     web_secret: str = "change-me"
     web_admin_password: str = "change-me"  # password for SQLAdmin /admin login
     daily_placement_fee: int = 50

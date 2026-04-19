@@ -3,10 +3,6 @@
 *.db
 *.sqlite*
 
-# Local binaries (downloaded for tunneling, not source)
-cloudflared.exe
-*.exe
-
 # Python
 __pycache__/
 *.pyc
@@ -26,6 +22,3 @@ __pycache__/
 
 # Markdown — по запросу пользователя
 *.md
-
-# Wrangler local state (account info, build cache)
-.wrangler/

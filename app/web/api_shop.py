@@ -9,8 +9,6 @@ from typing import Any
 from urllib.parse import parse_qsl
 
 from aiogram import Bot
-from aiogram.client.session.aiohttp import AiohttpSession
-from aiogram.client.telegram import TelegramAPIServer
 from aiogram.types import LabeledPrice
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
@@ -157,12 +155,7 @@ def _get_bot() -> Bot:
     """
     global _bot_singleton
     if _bot_singleton is None:
-        if settings.telegram_api_server:
-            api = TelegramAPIServer.from_base(settings.telegram_api_server.rstrip("/"))
-            session = AiohttpSession(api=api)
-            _bot_singleton = Bot(token=settings.bot_token, session=session)
-        else:
-            _bot_singleton = Bot(token=settings.bot_token)
+        _bot_singleton = Bot(token=settings.bot_token)
     return _bot_singleton
 
 
