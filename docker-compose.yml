@@ -28,7 +28,10 @@ services:
   web:
     build: .
     restart: unless-stopped
-    command: uvicorn app.web:app --host 0.0.0.0 --port 8000
+    # --proxy-headers + --forwarded-allow-ips=* — доверяем X-Forwarded-Proto от
+    # reverse proxy (Caddy), иначе sqladmin генерирует абсолютные URL с http://
+    # и браузер блокирует mixed content, когда сайт открыт по https.
+    command: uvicorn app.web:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips=*
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://mp:mp@db:5432/marketplace

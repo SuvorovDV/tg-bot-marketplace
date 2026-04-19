@@ -6,19 +6,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Section
 
 DEFAULT_SECTIONS: list[tuple[str, str, int]] = [
-    ("browse", "🔎 Каталог", 10),
-    ("my_products", "📦 Мои товары", 20),
-    ("balance", "💰 Баланс", 30),
-    ("help", "ℹ️ Помощь", 40),
+    ("shop", "🛍 Магазин", 10),
     ("admin", "⚙️ Админка", 100),
 ]
 
 
 async def ensure_default_sections(session: AsyncSession) -> None:
-    existing = {s.code for s in (await session.scalars(select(Section))).all()}
+    """Sync bot sections to DEFAULT_SECTIONS: add missing, drop obsolete codes."""
+    default_codes = {code for code, _, _ in DEFAULT_SECTIONS}
+    existing = {s.code: s for s in (await session.scalars(select(Section))).all()}
     for code, title, order in DEFAULT_SECTIONS:
         if code not in existing:
             session.add(Section(code=code, title=title, sort_order=order))
+    for code, section in existing.items():
+        if code not in default_codes:
+            await session.delete(section)
     await session.commit()
 
 

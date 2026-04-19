@@ -5,17 +5,30 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     KeyboardButton,
     ReplyKeyboardMarkup,
+    WebAppInfo,
 )
 
+from app.config import settings
 from app.models import FilterOption, Section
+
+
+def _miniapp_url() -> str:
+    if settings.miniapp_url:
+        return settings.miniapp_url.rstrip("/")
+    base = settings.public_web_url.rstrip("/")
+    return f"{base}/app" if base else ""
 
 
 def main_menu(sections: list[Section], is_admin: bool) -> ReplyKeyboardMarkup:
     rows: list[list[KeyboardButton]] = []
+    url = _miniapp_url()
     for s in sections:
         if s.code == "admin" and not is_admin:
             continue
-        rows.append([KeyboardButton(text=s.title)])
+        if s.code == "shop" and url.startswith("https://"):
+            rows.append([KeyboardButton(text=s.title, web_app=WebAppInfo(url=url))])
+        else:
+            rows.append([KeyboardButton(text=s.title)])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
